@@ -214,10 +214,10 @@ External review: auto
 **Files:**
 - Create: `skills/team-tool/SKILL.md`
 
-- [ ] what `ccc team` and the relevant `ccc room` commands do, the kickoff convention, `ask`, `mark`; explicitly not
+- [x] what `ccc team` and the relevant `ccc room` commands do, the kickoff convention, `ask`, `mark`; explicitly not
       a workflow (no advice on phases, roles or personas); within the app's skill front-matter limits
-- [ ] write a test that the skill's command list matches `plugin.json`'s usage (drift guard)
-- [ ] run tests - must pass before next task
+- [x] write a test that the skill's command list matches `plugin.json`'s usage (drift guard)
+- [x] run tests - must pass before next task
 
 ### Task 11: Verify acceptance criteria [model: sonnet]
 
