@@ -1,6 +1,6 @@
 'use strict'
 // The whole flow through the fake ctx, as a lead Claude tab would drive it with `ccc team`. Later tasks extend it:
-// ask and reply (task 4), mark and stats (task 6), end with export and the folder checked (task 7).
+// ask and reply (task 4), mark and stats (task 6), end with export and the folder checked (task 7), the panel (task 8).
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
@@ -52,7 +52,7 @@ test('flow: start, join, hire two, list', async (t) => {
   assert.deepEqual(list.members.map((m) => [m.name, m.coordinator]).sort(), [['backend', false], ['frontend', false], ['lead', true]])
 })
 
-test('flow: ask, reply, mark, stats', async (t) => {
+test('flow: ask, reply, mark, stats, end with export', async (t) => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'team-flow2-')))
   t.after(() => {
     host.deactivate()
@@ -95,4 +95,19 @@ test('flow: ask, reply, mark, stats', async (t) => {
   assert.match(text, /spans \(split at marks\)/)
   assert.match(text, /a proxy/)
   assert.equal((await teams.get(roomId)).marks.length, 2)
+
+  // end with export: a new folder with the docs, log, metrics and questions; then the room ends.
+  fs.mkdirSync(path.join(dir, 'exports'))
+  const end = await f.run(['end', '--export', 'exports'], lead)
+  assert.equal(end.code, undefined, end.stderr)
+  const [name] = fs.readdirSync(path.join(dir, 'exports'))
+  assert.match(name, /^checkout-v2-\d{8}-\d{4}$/)
+  const folder = path.join(dir, 'exports', name)
+  assert.deepEqual(fs.readdirSync(folder).sort(), ['docs', 'log.jsonl', 'metrics.json', 'metrics.md', 'questions.md'])
+  assert.equal(fs.readFileSync(path.join(folder, 'docs', 'members', 'dev', 'kickoff.md'), 'utf8'), '# Dev\n')
+  const exported = JSON.parse(fs.readFileSync(path.join(folder, 'metrics.json'), 'utf8'))
+  assert.deepEqual(exported.marks.map((m) => m.label), ['design done', 'build done'])
+  assert.equal(exported.spans.at(-1).to, 'end')
+  assert.match(fs.readFileSync(path.join(folder, 'questions.md'), 'utf8'), /## q1 from dev: answered\n[\s\S]*> Which db\?/)
+  assert.ok(f.rooms.get(roomId).endedAt !== undefined)
 })

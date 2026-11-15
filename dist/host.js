@@ -7,6 +7,7 @@ const { createTeams } = require('../lib/teams.js')
 const { createQuestions } = require('../lib/questions.js')
 const { createCommands, USAGE } = require('../lib/commands.js')
 const { createMetrics } = require('../lib/metrics.js')
+const { createEnding } = require('../lib/export.js')
 
 const OLD_APP = 'Team needs cc-cockpit 0.18.1 or newer (Rooms): update the app.'
 
@@ -37,9 +38,11 @@ exports.activate = (ctx) => {
   const questions = createQuestions(ctx, teams)
   // One metrics instance too: it owns the in-memory status intervals and the throttled saves of every team.
   metrics = createMetrics(ctx, teams)
-  instances = { teams, questions, metrics }
+  // End (with its export) and Delete: one instance too, its per-team lock refuses an End from the CLI and the panel at once.
+  const ending = createEnding(ctx, teams, metrics)
+  instances = { teams, questions, metrics, ending }
   metrics.start().catch((err) => ctx.log.warn(`team metrics: ${err && err.message}`))
-  disposers.push(ctx.cli.register('team', createCommands(ctx, teams, questions, metrics)))
+  disposers.push(ctx.cli.register('team', createCommands(ctx, teams, questions, metrics, ending)))
 }
 
 exports.deactivate = () => {

@@ -342,10 +342,13 @@ test('end: coordinator-only; ends the room, the record is marked ended, members 
   assert.equal((await f.run(['start', 'Next'], lead)).code, undefined)
 })
 
-test('end: --export is not part of this version yet (usage error); extra arguments too', async () => {
+test('end: usage errors (extra arguments, an empty or valueless --export)', async () => {
   const { f, lead } = await started()
-  assert.equal((await f.run(['end', '--export', '/tmp'], lead)).code, 2)
   assert.equal((await f.run(['end', 'now'], lead)).code, 2)
+  assert.equal((await f.run(['end', '--export'], lead)).code, 2)
+  const r = await f.run(['end', '--export', ''], lead)
+  assert.equal(r.code, 2)
+  assert.match(r.stderr, /usage: ccc team end \[--export <dir>\]/)
 })
 
 test('a non-Rooms failure (an RPC error) is printed, exit 1', async () => {

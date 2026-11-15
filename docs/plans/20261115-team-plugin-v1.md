@@ -165,16 +165,17 @@ External review: auto
 - Create: `lib/export.js`, `test/export.test.js`
 - Modify: `lib/commands.js`
 
-- [ ] `end [--export <dir>]`, falling back to the `exportDir` setting, none when both empty
-- [ ] new folder `<dir>/<team-slug>-<yyyymmdd-hhmm>/`, refused when it exists or `<dir>` is not a directory; files
+- [x] `end [--export <dir>]`, falling back to the `exportDir` setting, none when both empty
+- [x] new folder `<dir>/<team-slug>-<yyyymmdd-hhmm>/`, refused when it exists or `<dir>` is not a directory; files
       created `wx` with no-follow; `docs/` from `ctx.rooms.docs`, `log.jsonl` paged to the end, `metrics.json`,
       `metrics.md` (table split at marks), `questions.md`
-- [ ] doc paths re-checked before writing; a failed export leaves the room running and says what failed
-- [ ] README and the skill say `--export` / `--kickoff` take any path the tab names: not a boundary (same OS user)
-- [ ] `delete` for an ended team (`ctx.rooms.delete`, record removed)
-- [ ] write tests: full export contents, existing folder, symlinked target, bad doc path, failure keeps the room,
+- [x] doc paths re-checked before writing; a failed export leaves the room running and says what failed
+- [x] README and the skill say `--export` / `--kickoff` take any path the tab names: not a boundary (same OS user)
+- [x] `delete` for an ended team (`ctx.rooms.delete`, record removed): `ending.deleteTeam` for the panel's Delete; no
+      `ccc team delete`, since an ended room has no members and no tab can be resolved as its coordinator
+- [x] write tests: full export contents, existing folder, symlinked target, bad doc path, failure keeps the room,
       setting fallback, delete
-- [ ] run tests - must pass before next task
+- [x] run tests - must pass before next task
 
 ### Task 8: Panel backend [model: opus]
 

@@ -99,7 +99,11 @@ and 500 panel actions; what falls out is folded into stored counters first, so n
 `docs/` (the room's docs as stored, `shared/` and `members/<name>/`), `log.jsonl` (the room log, paged through to the
 end), `metrics.json`, `metrics.md` (a table, split at marks), `questions.md`. Without `--export` the plugin setting
 "Export folder" is used (empty by default: no export). Paths come from Rooms (already restricted to `[A-Za-z0-9._-]`,
-depth 4) and are checked again before writing; files are written with no-follow, never through a symlink.
+depth 4) and are checked again before writing; files are written with no-follow, never through a symlink, and every
+folder of the export is checked by realpath before each write and each cleanup removal (a folder swapped for a link
+stops the export, and the cleanup removes nothing through it). Files are 0600 and folders 0700 (members' private docs,
+message texts). `ccc team end` gives the export 20 s, inside the 30 s cut of a `ccc` call, so a too-big team fails
+and keeps running instead of ending unseen after exit 124; the panel has no budget.
 
 An ended team stays in the panel, read-only, until **Delete** (`ctx.rooms.delete`; Rooms keeps 50 ended rooms).
 
