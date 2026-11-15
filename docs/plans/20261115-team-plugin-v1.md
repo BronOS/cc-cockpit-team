@@ -136,17 +136,17 @@ External review: auto
 - Create: `lib/metrics.js`, `test/metrics.test.js`
 - Modify: `dist/host.js`
 
-- [ ] per member: hired/left (+ why), model/effort; cost USD and context % from `ctx.sessions` on change, keeping the
+- [x] per member: hired/left (+ why), model/effort; cost USD and context % from `ctx.sessions` on change, keeping the
       last value when absent (status line off, tab ended) and shown as unknown when never seen
-- [ ] status time: `working` and `needs-permission` count as working, `waiting` as waiting, `idle`/`starting` as idle
+- [x] status time: `working` and `needs-permission` count as working, `waiting` as waiting, `idle`/`starting` as idle
       (check the exact `SessionStatus` values in the SDK); the time between two changes goes to the earlier status; a
       paused room or an app quit is not working time
-- [ ] room log polled with a `seq` cursor (`more` paged through): messages sent/received, doc reads/writes, leaves with
+- [x] room log polled with a `seq` cursor (`more` paged through): messages sent/received, doc reads/writes, leaves with
       why; poll every 5 s while the team is live, at once when `SessionInfo.room` / `held` change, never for an ended
       team; cursor kept in the record
-- [ ] saves throttled (not one per status event)
-- [ ] write tests: status mapping and totals, absent cost, log paging, poll stop on end, restart resume, throttling
-- [ ] run tests - must pass before next task
+- [x] saves throttled (not one per status event)
+- [x] write tests: status mapping and totals, absent cost, log paging, poll stop on end, restart resume, throttling
+- [x] run tests - must pass before next task
 
 ### Task 6: Marks, spans and stats [model: sonnet]
 

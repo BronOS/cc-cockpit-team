@@ -5,6 +5,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const host = require('../dist/host.js')
 const { fakeCtx } = require('./fake-ctx')
+const { createTeams } = require('../lib/teams.js')
 
 test.afterEach(() => host.deactivate())
 
@@ -97,4 +98,23 @@ test('the host wires ask: a member asks through ccc team and the question is sto
   assert.equal(r.code, undefined, r.stderr)
   assert.match(r.stdout, /^asked q1:/)
   assert.equal(f.store.get(`team:${id}`).questions[0].text, 'which db?')
+})
+
+test('one metrics instance: started on activate (one poll schedule), stopped on deactivate, which waits for its save', async () => {
+  const f = fakeCtx()
+  const { id } = await f.ctx.rooms.create({ title: 'T' })
+  await createTeams(f.ctx).add({ id })
+  await f.ctx.rooms.open(id, { name: 'lead', coordinator: true })
+  await f.ctx.rooms.open(id, { name: 'dev' })
+  f.pushLog(id, { type: 'send', from: 'dev', to: 'lead', text: 'a', delivery: [{ to: 'lead', path: 'delivered' }] })
+  host.activate(f.ctx)
+  for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r))
+  assert.equal(f.schedules.length, 1)
+  // The first poll counted the send; the throttled save is 5 s away, so only deactivate's final save writes it.
+  assert.equal(f.store.get(`team:${id}`).metrics.members.dev, undefined)
+  const done = host.deactivate()
+  assert.equal(typeof (done && done.then), 'function')
+  await done
+  assert.equal(f.store.get(`team:${id}`).metrics.members.dev.sent, 1)
+  assert.equal(f.schedules.length, 0)
 })

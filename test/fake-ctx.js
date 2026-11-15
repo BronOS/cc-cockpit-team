@@ -11,7 +11,11 @@
 // ctx.storage, ctx.notify, ctx.panels, ctx.settings, ctx.schedule. Not modelled: the delivery gate's
 // timing (Stop pointers, the 5-stops cap, auto-pause) and the 30 s abort: a test sets a session's
 // status, `typed` or the room's `paused` to choose a send's path, and passes its own `signal`.
-// Plugin doc reads and writes are not logged (the real log's fields for them are not documented).
+// Log entries carry main's fields (cc-cockpit src/main/rooms: room-registry.ts, room-docs.ts, room-delivery.ts):
+// create { title, pluginId }, join { member, coordinator, via: 'open' | 'invite' }, leave { member, why, dropped },
+// end { why }, invite { member, coordinator, expiresAt }, send { from, to, text, delivery }, the person's held-badge
+// click as a send with no `delivery` (`badgeClick`), and doc-read / doc-write { by, path, bytes } for every plugin
+// read and write (`by: 'plugin'`).
 
 const fs = require('node:fs')
 const path = require('node:path')
@@ -181,7 +185,7 @@ function fakeCtx(opts = {}) {
         seq: 0,
         sends: [],
       })
-      log(rooms.get(id), { type: 'create', title })
+      log(rooms.get(id), { type: 'create', title, pluginId: MANIFEST.id })
       return { id }
     },
     async list() {
@@ -200,7 +204,7 @@ function fakeCtx(opts = {}) {
       r.members.clear()
       r.invites.clear()
       r.endedAt = now()
-      log(r, { type: 'end' })
+      log(r, { type: 'end', why: 'ended' })
       emitSessions()
     },
     async delete(id) {
@@ -218,7 +222,7 @@ function fakeCtx(opts = {}) {
       r.members.set(m.name, m)
       setSessionRoom(tabId, r, m)
       opens.push({ via: 'rooms.open', roomId: id, tabId, ...structuredClone(options), cwd })
-      log(r, { type: 'join', member: m.name, coordinator: m.coordinator })
+      log(r, { type: 'join', member: m.name, coordinator: m.coordinator, via: 'open' })
       emitSessions()
       return { tabId }
     },
@@ -231,7 +235,7 @@ function fakeCtx(opts = {}) {
       const code = `inv${nextCode++}`
       const expiresAt = now() + 10 * MINUTE
       r.invites.set(code, { name: options.name, coordinator: options.coordinator === true, expiresAt })
-      log(r, { type: 'invite', member: options.name, coordinator: options.coordinator === true })
+      log(r, { type: 'invite', member: options.name, coordinator: options.coordinator === true, expiresAt })
       return { code, expiresAt }
     },
     async members(id) {
@@ -249,7 +253,7 @@ function fakeCtx(opts = {}) {
       if (!m) throw refuse('rooms.remove', `no member ${name}`)
       r.members.delete(name)
       if (m.tabId) setSessionRoom(m.tabId, null)
-      log(r, { type: 'leave', member: name, why: 'removed' })
+      log(r, { type: 'leave', member: name, why: 'removed', dropped: m.held })
       emitSessions()
     },
     async send(id, to, text) {
@@ -279,7 +283,9 @@ function fakeCtx(opts = {}) {
         checkDocPath('rooms.docs.get', p)
         // Refused equals missing: one answer for both, never undefined.
         if (!r.docs.has(p)) throw refuse('rooms.docs.get', `no such doc: ${p}`)
-        return r.docs.get(p)
+        const text = r.docs.get(p)
+        log(r, { type: 'doc-read', by: 'plugin', path: p, bytes: Buffer.byteLength(text, 'utf8') })
+        return text
       },
       async put(id, p, text) {
         const r = room('rooms.docs.put', id)
@@ -293,6 +299,7 @@ function fakeCtx(opts = {}) {
         for (const [q, t] of r.docs) if (q !== p) total += Buffer.byteLength(t, 'utf8')
         if (total > ROOM_DOCS_MAX) throw refuse('rooms.docs.put', 'a room holds at most 20 MiB of docs')
         r.docs.set(p, text)
+        log(r, { type: 'doc-write', by: 'plugin', path: p, bytes: size })
       },
     },
     async log(id, options = {}) {
@@ -446,7 +453,7 @@ function fakeCtx(opts = {}) {
         const m = { name: inv.name, coordinator: inv.coordinator, tabId, held: 0 }
         r.members.set(m.name, m)
         setSessionRoom(tabId, r, m)
-        log(r, { type: 'join', member: m.name, coordinator: m.coordinator })
+        log(r, { type: 'join', member: m.name, coordinator: m.coordinator, via: 'invite' })
         emitSessions()
         return
       }
@@ -457,6 +464,19 @@ function fakeCtx(opts = {}) {
       const r = rooms.get(roomId)
       r.paused = paused
       log(r, { type: paused ? 'pause' : 'resume' })
+    },
+    /**
+     * The person clicks a member's held badge (main's RoomDelivery.deliverHeld): the pointer is pasted when the tab
+     * waits, and the click is logged as a send with no `delivery` (no message moved). Returns whether it pasted.
+     */
+    badgeClick(roomId, name) {
+      const r = rooms.get(roomId)
+      const m = r && r.members.get(name)
+      if (!m || m.held === 0 || r.endedAt !== undefined) return false
+      const s = m.tabId && sessions.get(m.tabId)
+      const delivered = !r.paused && !!s && !s.typed && s.status === 'waiting'
+      log(r, { type: 'send', from: 'person', to: name, via: 'badge', pointer: m.held, delivered })
+      return delivered
     },
     /** Append a log entry as Rooms would (for metrics tests): `type` is required, `at` defaults to the clock. */
     pushLog(roomId, entry) {
