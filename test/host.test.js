@@ -86,3 +86,15 @@ test('manifest: id, version, cli, panel, skill, setting, description names the a
     assert.ok(fs.existsSync(path.join(__dirname, '..', f)), f)
   }
 })
+
+test('the host wires ask: a member asks through ccc team and the question is stored', async () => {
+  const f = fakeCtx()
+  const { id } = await f.ctx.rooms.create({ title: 'T' })
+  await f.ctx.rooms.open(id, { name: 'lead', coordinator: true })
+  const dev = (await f.ctx.rooms.open(id, { name: 'dev' })).tabId
+  host.activate(f.ctx)
+  const r = await f.run(['ask', 'which db?'], { tabId: dev })
+  assert.equal(r.code, undefined, r.stderr)
+  assert.match(r.stdout, /^asked q1:/)
+  assert.equal(f.store.get(`team:${id}`).questions[0].text, 'which db?')
+})

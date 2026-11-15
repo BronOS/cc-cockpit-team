@@ -4,6 +4,7 @@
 // concern (lib/teams.js, lib/commands.js, ...).
 
 const { createTeams } = require('../lib/teams.js')
+const { createQuestions } = require('../lib/questions.js')
 const { createCommands, USAGE } = require('../lib/commands.js')
 
 const OLD_APP = 'Team needs cc-cockpit 0.18.1 or newer (Rooms): update the app.'
@@ -28,7 +29,10 @@ exports.activate = (ctx) => {
   // Load the records at once (dropping those whose room is gone) rather than on the first command; a failure
   // is only logged: every later call loads again.
   teams.load().catch((err) => ctx.log.warn(`team records: ${err && err.message}`))
-  disposers.push(ctx.cli.register('team', createCommands(ctx, teams)))
+  // One questions instance for the `ccc team` handler and the panel (task 8): the reply lock and the askers' tabs
+  // live in it, so a second instance would let a Reply and a Done race. createCommands refuses to build its own.
+  const questions = createQuestions(ctx, teams)
+  disposers.push(ctx.cli.register('team', createCommands(ctx, teams, questions)))
 }
 
 exports.deactivate = () => {

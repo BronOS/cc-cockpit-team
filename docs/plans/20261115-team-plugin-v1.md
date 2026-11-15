@@ -123,12 +123,12 @@ External review: auto
 - Create: `lib/questions.js`, `test/questions.test.js`
 - Modify: `lib/commands.js`
 
-- [ ] `ask "<text>"` / `ask -` (stdin) by any member: record with an id, `ctx.notify` a notice, print the id; text
+- [x] `ask "<text>"` / `ask -` (stdin) by any member: record with an id, `ctx.notify` a notice, print the id; text
       checked by Rooms' message rules (≤ 20000 chars, characters)
-- [ ] `reply(teamId, questionId, text)` sends `Answer to your question <id>:` + text to the asker via `ctx.rooms.send`
+- [x] `reply(teamId, questionId, text)` sends `Answer to your question <id>:` + text to the asker via `ctx.rooms.send`
       and records the answer time; `done(...)` closes without reply; a gone member answers "left the team"
-- [ ] write tests: ask from member and outsider, stdin form, reply, done, reply to a gone member, bad text
-- [ ] run tests - must pass before next task
+- [x] write tests: ask from member and outsider, stdin form, reply, done, reply to a gone member, bad text
+- [x] run tests - must pass before next task
 
 ### Task 5: Member metrics [model: opus]
 
