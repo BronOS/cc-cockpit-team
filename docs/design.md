@@ -85,11 +85,12 @@ changes, `ctx.sessions.onChange`), messages sent and received, doc reads and wri
 
 Per team: start, end, total cost, sum of member working time, the person's active time (question to reply, plus panel
 actions; a proxy, said so in the panel and export). **Marks** (`mark`, or the panel's Mark button) split cost and time
-into spans; what a mark means is the flow's.
+into spans; what a mark means is the flow's. A mark label cannot be `start`, `now` or `end` (the spans' fixed ends).
 
 Kept in the team record, updated on status changes and log polls; shown live in the panel and by `stats`. Cost covers
 the members' tabs only (a member's subagents are in its tab's cost; work outside the team's tabs is not counted). Time
-between an app quit and the person's resume is not counted as working.
+between an app quit and the person's resume is not counted as working. The record keeps the newest 300 closed questions
+and 500 panel actions; what falls out is folded into stored counters first, so no total goes down as a team goes on.
 
 ## 5. End and export
 

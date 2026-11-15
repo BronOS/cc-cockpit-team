@@ -153,11 +153,11 @@ External review: auto
 **Files:**
 - Modify: `lib/metrics.js`, `lib/commands.js`, `test/metrics.test.js`, `test/flow.test.js`
 
-- [ ] `mark "<label>"` (coordinator); spans between marks with cost and time; per-team totals; the person's active
+- [x] `mark "<label>"` (coordinator); spans between marks with cost and time; per-team totals; the person's active
       time (question to reply, panel actions) labelled as a proxy
-- [ ] `stats [--json]`
-- [ ] write tests: span math across marks, totals, stats output; extend the flow test with ask, reply, mark
-- [ ] run tests - must pass before next task
+- [x] `stats [--json]`
+- [x] write tests: span math across marks, totals, stats output; extend the flow test with ask, reply, mark
+- [x] run tests - must pass before next task
 
 ### Task 7: End and export [model: opus]
 

@@ -5,10 +5,11 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { fakeCtx } = require('./fake-ctx')
-const { createTeams } = require('../lib/teams.js')
+const { createTeams, NOT_IN_TEAM } = require('../lib/teams.js')
 const { createQuestions } = require('../lib/questions.js')
 const { createCommands } = require('../lib/commands.js')
-const { createMetrics, bucketOf, leftWhy, addCost, SAVE_MS, CHECKPOINT_MS, POLL_SECONDS } = require('../lib/metrics.js')
+const { createMetrics, bucketOf, leftWhy, addCost, SAVE_MS, CHECKPOINT_MS, POLL_SECONDS, LABEL_MAX, MARKS_MAX } = require('../lib/metrics.js')
+const { ACTION_MS, ACTIONS_MAX } = require('../lib/stats.js')
 
 /** Timers a test fires by hand (the throttled save). */
 function manualTimers() {
@@ -483,4 +484,229 @@ test('a log failure is logged and the poll goes on; a deleted team is forgotten'
   await f.ctx.rooms.delete(id)
   await metrics.poll()
   await metrics.flush() // nothing left to save, no throw
+})
+
+test('mark: snapshots cost and working time (running intervals included), stores who and when', async () => {
+  const { f, metrics, id, dev, member } = await setup()
+  f.emitSession({ tabId: dev, status: 'working', costUsd: 0.4 })
+  f.advance(2000)
+  const m = await metrics.mark(id, '  phase 1  ', 'lead')
+  assert.equal(m.label, 'phase 1')
+  assert.equal(m.by, 'lead')
+  assert.equal(m.cost, 0.4)
+  assert.equal(m.workingMs, 2000) // the open interval is counted up to the mark
+  f.advance(3000)
+  f.emitSession({ tabId: dev, costUsd: 1.4 })
+  await metrics.mark(id, 'phase 2', 'person')
+  const s = await metrics.stats(id)
+  assert.deepEqual(s.spans.map((x) => [x.from, x.to, Math.round(x.costUsd * 100) / 100, x.workingMs]), [
+    ['start', 'phase 1', 0.4, 2000],
+    ['phase 1', 'phase 2', 1, 3000],
+    ['phase 2', 'now', 0, 0],
+  ])
+  // The time of the open interval was not counted twice.
+  await metrics.flush()
+  assert.equal((await member('dev')).workingMs, 5000)
+})
+
+test('mark: refuses empty, multi-line, hidden-character and over-long labels, an ended team and too many marks', async () => {
+  const { f, metrics, id, teams } = await setup()
+  for (const bad of ['', '   ', 'a\nb', 'a\tb', 'a‮b', 'x'.repeat(LABEL_MAX + 1), 5, undefined]) {
+    await assert.rejects(() => metrics.mark(id, bad, 'lead'), /label|mark/, JSON.stringify(bad))
+  }
+  await assert.rejects(() => metrics.mark('nope', 'x', 'lead'), /no such team/)
+  const rec = await teams.get(id)
+  for (let i = 0; i < MARKS_MAX; i++) rec.marks.push({ at: 1, label: 'm', by: 'x', cost: null, workingMs: 0 })
+  await assert.rejects(() => metrics.mark(id, 'one more', 'lead'), /at most 200 marks/)
+  rec.marks.length = 0
+  await f.ctx.rooms.end(id)
+  await teams.refresh()
+  await assert.rejects(() => metrics.mark(id, 'late', 'lead'), /ended/)
+})
+
+test('mark: a failed save leaves no mark behind', async () => {
+  const { f, metrics, id, teams } = await setup()
+  const real = f.ctx.storage.set
+  f.ctx.storage.set = async () => {
+    throw new Error('disk full')
+  }
+  await assert.rejects(() => metrics.mark(id, 'x', 'lead'), /disk full/)
+  f.ctx.storage.set = real
+  assert.equal((await teams.get(id)).marks.length, 0)
+})
+
+test('panelAction: kept per team, capped, counts as the person\'s active time; an ended team ignores it', async () => {
+  const { f, metrics, id, teams } = await setup()
+  await metrics.panelAction(id)
+  f.advance(1000)
+  await metrics.panelAction(id)
+  const s = await metrics.stats(id)
+  // Two actions 1 s apart, now = the second: the first window is capped at now (1 s), the second has none yet.
+  assert.equal(s.personActiveMs, 1000)
+  const rec = await teams.get(id)
+  for (let i = 0; i < ACTIONS_MAX + 10; i++) await metrics.panelAction(id)
+  assert.equal(rec.metrics.actions.length, ACTIONS_MAX)
+  await metrics.panelAction('nope') // no throw
+  await f.ctx.rooms.end(id)
+  await teams.refresh()
+  const n = rec.metrics.actions.length
+  await metrics.panelAction(id)
+  assert.equal(rec.metrics.actions.length, n)
+})
+
+test('stats credits the running intervals and arms a save, so frequent reads cannot starve the checkpoint', async () => {
+  const { f, metrics, timers, id, dev } = await setup()
+  f.emitSession({ tabId: dev, status: 'working' })
+  await metrics.flush()
+  // A panel reading every 30 s for 3 minutes: each read restarts the interval, so the poll's checkpoint never fires.
+  for (let i = 0; i < 6; i++) {
+    f.advance(30_000)
+    await metrics.stats(id)
+    await metrics.poll()
+  }
+  assert.ok(timers.list.length > 0, 'a save is armed')
+  await timers.fire()
+  assert.equal(f.store.get(`team:${id}`).metrics.members.dev.workingMs, 180_000)
+})
+
+test('stats of an ended team: elapsed fixed at the end, spans end at "end", nothing credited after it', async () => {
+  const { f, metrics, teams, id, dev } = await setup()
+  f.emitSession({ tabId: dev, status: 'working' })
+  f.advance(4000)
+  await f.ctx.rooms.end(id)
+  await teams.refresh()
+  await metrics.poll()
+  const endedAt = (await teams.get(id)).endedAt
+  f.advance(60_000)
+  const s = await metrics.stats(id)
+  assert.equal(s.endedAt, endedAt)
+  assert.equal(s.elapsedMs, endedAt - s.createdAt)
+  assert.deepEqual(s.spans.map((x) => `${x.from}>${x.to}`), ['start>end'])
+  assert.equal(s.spans[0].toAt, endedAt)
+  assert.equal(s.totals.workingMs, 4000)
+  f.advance(60_000)
+  assert.equal((await metrics.stats(id)).totals.workingMs, 4000)
+})
+
+test('stats and mark on a paused room: the paused stretch is in no total and no span', async () => {
+  const { f, metrics, id, dev } = await setup()
+  f.emitSession({ tabId: dev, status: 'working' })
+  f.advance(1000)
+  f.setPaused(id, true)
+  await metrics.poll()
+  f.advance(30_000)
+  const s = await metrics.stats(id)
+  assert.equal(s.totals.workingMs, 1000)
+  const m = await metrics.mark(id, 'while paused', 'person')
+  assert.equal(m.workingMs, 1000)
+  f.setPaused(id, false)
+  await metrics.poll()
+  f.advance(2000)
+  const after = await metrics.stats(id)
+  assert.deepEqual(after.spans.map((x) => x.workingMs), [1000, 2000])
+})
+
+test('mark before any cost was seen, then one after: the first span is unknown, the second has the cost', async () => {
+  const { f, metrics, id, dev } = await setup()
+  const first = await metrics.mark(id, 'no cost yet', 'lead')
+  assert.equal(first.cost, null)
+  f.emitSession({ tabId: dev, costUsd: 0.3 })
+  const second = await metrics.mark(id, 'cost seen', 'lead')
+  assert.ok(Math.abs(second.cost - 0.3) < 1e-9)
+  const s = await metrics.stats(id)
+  assert.equal(s.spans[0].costUsd, null)
+  assert.ok(Math.abs(s.spans[1].costUsd - 0.3) < 1e-9)
+  assert.equal(s.spans[2].costUsd, 0)
+})
+
+test('mark and panelAction on a room that ended behind the record\'s back (not reconciled yet): refused, ignored', async () => {
+  const { f, metrics, teams, id } = await setup()
+  await f.ctx.rooms.end(id) // no teams.refresh: the record still reads live
+  assert.equal((await teams.get(id)).endedAt, undefined)
+  await assert.rejects(() => metrics.mark(id, 'late', 'person'), /ended/)
+  const rec = await teams.get(id)
+  assert.equal(rec.marks.length, 0)
+  await metrics.panelAction(id)
+  assert.equal((rec.metrics.actions || []).length, 0)
+})
+
+test('mark: the span names start, now and end are refused as labels', async () => {
+  const { metrics, id } = await setup()
+  for (const bad of ['start', 'now', 'END', ' Now ']) {
+    await assert.rejects(() => metrics.mark(id, bad, 'lead'), /names a span's end/, bad)
+  }
+  assert.equal((await metrics.mark(id, 'now we ship', 'lead')).label, 'now we ship')
+})
+
+test('two marks at once: kept in order; one failing save is rolled back and the next save drops it from storage', async () => {
+  const { f, metrics, timers, teams, id } = await setup()
+  const real = f.ctx.storage.set
+  let calls = 0
+  f.ctx.storage.set = async (k, v) => {
+    calls++
+    if (calls === 1) {
+      await settle() // the second mark's save writes first, the first mark included
+      throw new Error('disk full')
+    }
+    return real(k, v)
+  }
+  const [a, b] = await Promise.allSettled([metrics.mark(id, 'a', 'lead'), metrics.mark(id, 'b', 'lead')])
+  assert.equal(a.status, 'rejected')
+  assert.equal(b.status, 'fulfilled')
+  assert.deepEqual((await teams.get(id)).marks.map((m) => m.label), ['b'])
+  // Storage got the failed mark through the other save; the team is dirty, so the next save heals it.
+  assert.deepEqual(f.store.get(`team:${id}`).marks.map((m) => m.label), ['a', 'b'])
+  f.ctx.storage.set = real
+  await timers.fire()
+  assert.deepEqual(f.store.get(`team:${id}`).marks.map((m) => m.label), ['b'])
+})
+
+test('two marks at once at the cap: one is stored, the other refused; both succeed in order below it', async () => {
+  const { metrics, teams, id } = await setup()
+  const rec = await teams.get(id)
+  const both = await Promise.all([metrics.mark(id, 'one', 'lead'), metrics.mark(id, 'two', 'lead')])
+  assert.deepEqual(rec.marks.map((m) => m.label), ['one', 'two'])
+  assert.ok(both[0].at <= both[1].at)
+  rec.marks.length = 0
+  for (let i = 0; i < MARKS_MAX - 1; i++) rec.marks.push({ at: 1, label: 'm', by: 'x', cost: null, workingMs: 0 })
+  const r = await Promise.allSettled([metrics.mark(id, 'x', 'lead'), metrics.mark(id, 'y', 'lead')])
+  assert.deepEqual(r.map((x) => x.status).sort(), ['fulfilled', 'rejected'])
+  assert.equal(rec.marks.length, MARKS_MAX)
+})
+
+test('panelAction past the cap: the person\'s active time never goes down', async () => {
+  const { f, metrics, id } = await setup()
+  let last = 0
+  for (let i = 0; i < ACTIONS_MAX + 40; i++) {
+    await metrics.panelAction(id)
+    f.advance(i % 3 === 0 ? ACTION_MS * 2 : 5000)
+    if (i % 50 === 0 || i >= ACTIONS_MAX) {
+      const ms = (await metrics.stats(id)).personActiveMs
+      assert.ok(ms >= last, `${ms} < ${last} at ${i}`)
+      last = ms
+    }
+  }
+  assert.ok(last > 0)
+})
+
+test('the CLI: stats from a non-member and a foreign tab, mark with no or a bad label, no metrics', async () => {
+  const { f, teams, id } = await setup()
+  const questions = createQuestions(f.ctx, teams)
+  const run = createCommands(f.ctx, teams, questions, createMetrics(f.ctx, teams))
+  const lead = (await f.ctx.rooms.members(id)).find((m) => m.name === 'lead').tabId
+  f.emitSession({ tabId: 'outsider', status: 'waiting' })
+  for (const tabId of ['outsider', 'tab-of-another-window', undefined]) {
+    const r = await run(['stats'], { tabId })
+    assert.equal(r.code, 1)
+    assert.equal(r.stderr, `${NOT_IN_TEAM}\n`)
+  }
+  assert.equal((await run(['mark'], { tabId: lead })).code, 2)
+  const bad = await run(['mark', 'a‮b'], { tabId: lead })
+  assert.equal(bad.code, 1)
+  assert.match(bad.stderr, /one line/)
+  assert.equal((await run(['mark', 'start'], { tabId: lead })).code, 1)
+  const without = createCommands(f.ctx, teams, questions)
+  const r = await without(['stats'], { tabId: lead })
+  assert.equal(r.code, 1)
+  assert.match(r.stderr, /metrics are not running/)
 })

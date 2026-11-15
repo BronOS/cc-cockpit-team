@@ -51,3 +51,48 @@ test('flow: start, join, hire two, list', async (t) => {
   assert.equal(list.you, 'backend')
   assert.deepEqual(list.members.map((m) => [m.name, m.coordinator]).sort(), [['backend', false], ['frontend', false], ['lead', true]])
 })
+
+test('flow: ask, reply, mark, stats', async (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'team-flow2-')))
+  t.after(() => {
+    host.deactivate()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  fs.writeFileSync(path.join(dir, 'dev.md'), '# Dev\n')
+  const f = fakeCtx({ projectDir: dir })
+  host.activate(f.ctx)
+  f.emitSession({ tabId: 'lead-tab', status: 'waiting' })
+  const lead = { tabId: 'lead-tab', cwd: dir }
+  const start = await f.run(['start', 'Checkout v2'], lead)
+  f.join(/ccc room join (\S+)/.exec(start.stdout)[1], 'lead-tab')
+  assert.equal((await f.run(['hire', 'dev', '--kickoff', 'dev.md'], lead)).code, undefined)
+  const dev = { tabId: f.opens.find((o) => o.via === 'rooms.open').tabId }
+  const { questions, teams } = host.instances()
+  const roomId = [...f.rooms.keys()][0]
+
+  f.emitSession({ tabId: dev.tabId, status: 'working', costUsd: 0.5 })
+  const mark1 = await f.run(['mark', 'design done'], lead)
+  assert.equal(mark1.code, undefined, mark1.stderr)
+  assert.match(mark1.stdout, /marked "design done"/)
+  // Only a coordinator marks.
+  assert.equal((await f.run(['mark', 'x'], dev)).code, 1)
+
+  assert.match((await f.run(['ask', 'Which db?'], dev)).stdout, /asked q1/)
+  await questions.reply(roomId, 'q1', 'Postgres')
+  f.emitSession({ tabId: dev.tabId, costUsd: 1.25 })
+  assert.equal((await f.run(['mark', 'build done'], lead)).code, undefined)
+
+  const stats = JSON.parse((await f.run(['stats', '--json'], dev)).stdout)
+  assert.equal(stats.title, 'Checkout v2')
+  assert.deepEqual(stats.marks.map((m) => m.label), ['design done', 'build done'])
+  assert.deepEqual(stats.spans.map((s) => `${s.from}>${s.to}`), ['start>design done', 'design done>build done', 'build done>now'])
+  const near = (x, y) => assert.ok(Math.abs(x - y) < 1e-9, `${x} != ${y}`)
+  near(stats.spans[0].costUsd, 0.5)
+  near(stats.spans[1].costUsd, 0.75)
+  near(stats.totals.costUsd, 1.25)
+  assert.equal(stats.questions.answered, 1)
+  const text = (await f.run(['stats'], dev)).stdout
+  assert.match(text, /spans \(split at marks\)/)
+  assert.match(text, /a proxy/)
+  assert.equal((await teams.get(roomId)).marks.length, 2)
+})

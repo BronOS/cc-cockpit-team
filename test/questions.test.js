@@ -4,6 +4,7 @@ const assert = require('node:assert/strict')
 const { fakeCtx } = require('./fake-ctx')
 const { createTeams, TeamError, NOT_IN_TEAM } = require('../lib/teams.js')
 const { createCommands } = require('../lib/commands.js')
+const { statsOf } = require('../lib/stats.js')
 const { createQuestions, TEXT_MAX, OPEN_MAX, OPEN_TEXT_MAX, KEPT_MAX, STORED_TEXT_MAX, replyPrefix } = require('../lib/questions.js')
 
 /** A team with a coordinator `lead` and a member `dev`, driven directly (the panel's path) and through `ccc team`. */
@@ -130,6 +131,9 @@ test('closed questions are compacted, never refused: text trimmed, then the olde
   assert.ok(rec.questions.reduce((s, q) => s + q.text.length, 0) <= STORED_TEXT_MAX)
   // The stored record is the compacted one, well under ctx.storage's 1 MiB.
   assert.ok(Buffer.byteLength(JSON.stringify(f.store.get(`team:${id}`))) < 1024 * 1024)
+  // The dropped ones still count: the stats never go down as the team goes on.
+  assert.equal(statsOf(rec, Date.now()).questions.asked, KEPT_MAX + 21)
+  assert.equal(rec.metrics.folded.asked, 21)
 })
 
 test('compaction trims the oldest closed text first and leaves open questions whole', async () => {

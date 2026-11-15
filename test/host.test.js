@@ -118,3 +118,21 @@ test('one metrics instance: started on activate (one poll schedule), stopped on 
   assert.equal(f.store.get(`team:${id}`).metrics.members.dev.sent, 1)
   assert.equal(f.schedules.length, 0)
 })
+
+test('instances(): null before activate and after deactivate; the objects the team command uses', async () => {
+  host.deactivate()
+  assert.equal(host.instances(), null)
+  const f = fakeCtx()
+  host.activate(f.ctx)
+  const inst = host.instances()
+  assert.ok(inst && inst.teams && inst.questions && inst.metrics)
+  f.emitSession({ tabId: 'lead-tab', status: 'waiting' })
+  const r = await f.run(['start', 'Shared'], { tabId: 'lead-tab' })
+  assert.equal(r.code, undefined, r.stderr)
+  // The record the command made is in the same teams store, and the same metrics answers for it.
+  const roomId = [...f.rooms.keys()][0]
+  assert.ok(await inst.teams.get(roomId))
+  assert.equal((await inst.metrics.stats(roomId)).title, 'Shared')
+  await host.deactivate()
+  assert.equal(host.instances(), null)
+})

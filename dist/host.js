@@ -12,6 +12,7 @@ const OLD_APP = 'Team needs cc-cockpit 0.18.1 or newer (Rooms): update the app.'
 
 let disposers = []
 let metrics = null
+let instances = null
 
 exports.activate = (ctx) => {
   // An app without Rooms has no ctx.rooms: register a handler that says so, rather than throwing on
@@ -36,6 +37,7 @@ exports.activate = (ctx) => {
   const questions = createQuestions(ctx, teams)
   // One metrics instance too: it owns the in-memory status intervals and the throttled saves of every team.
   metrics = createMetrics(ctx, teams)
+  instances = { teams, questions, metrics }
   metrics.start().catch((err) => ctx.log.warn(`team metrics: ${err && err.message}`))
   disposers.push(ctx.cli.register('team', createCommands(ctx, teams, questions, metrics)))
 }
@@ -48,7 +50,10 @@ exports.deactivate = () => {
   // race the teardown on every window close, quit and plugin reload.
   const m = metrics
   metrics = null
+  instances = null
   if (m) return m.stop().catch(() => {})
 }
 
+/** The live shared instances (the panel's backend builds on them; tests drive a reply through them). */
+exports.instances = () => instances
 exports.USAGE = USAGE
