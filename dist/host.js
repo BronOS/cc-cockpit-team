@@ -3,6 +3,8 @@
 // phases or personas (docs/design.md §0). This file only wires the pieces; each later module owns one
 // concern (lib/teams.js, lib/commands.js, ...).
 
+const { createTeams } = require('../lib/teams.js')
+
 const USAGE = `ccc team: run a team of Claude tabs (one room)
 
   start "<title>" [--as <name>]      create the team; prints the coordinator's join line
@@ -21,8 +23,8 @@ const OLD_APP = 'Team needs cc-cockpit 0.18.1 or newer (Rooms): update the app.'
 
 let disposers = []
 
-/** The `ccc team` handler. Later tasks replace the body with the command table. */
-function createHandler(_ctx) {
+/** The `ccc team` handler. Later tasks replace the body with the command table (lib/commands.js). */
+function createHandler(_ctx, _teams) {
   return async (argv) => {
     const sub = argv[0]
     if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') return { stdout: USAGE }
@@ -44,7 +46,11 @@ exports.activate = (ctx) => {
     )
     return
   }
-  disposers.push(ctx.cli.register('team', createHandler(ctx)))
+  const teams = createTeams(ctx)
+  // Load the records at once (dropping those whose room is gone) rather than on the first command; a failure
+  // is only logged: every later call loads again.
+  teams.load().catch((err) => ctx.log.warn(`team records: ${err && err.message}`))
+  disposers.push(ctx.cli.register('team', createHandler(ctx, teams)))
 }
 
 exports.deactivate = () => {

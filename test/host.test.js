@@ -14,6 +14,28 @@ test('activate registers the team command', () => {
   assert.ok(f.handlers.has('team'))
 })
 
+test('activate loads the records at once: a record of a gone room is dropped without a command', async () => {
+  const f = fakeCtx()
+  f.store.set('team:room-gone', { roomId: 'room-gone', title: 'Old', createdAt: 1, marks: [], questions: [], metrics: { members: {}, logSeq: 0 } })
+  host.activate(f.ctx)
+  await new Promise((r) => setImmediate(r))
+  assert.equal(f.store.has('team:room-gone'), false)
+})
+
+test('a failing load is logged and the team handler is still registered', async () => {
+  const f = fakeCtx()
+  const warned = []
+  f.ctx.log.warn = (m) => warned.push(m)
+  f.ctx.rooms.list = async () => {
+    throw new Error('rooms.list: boom')
+  }
+  host.activate(f.ctx)
+  await new Promise((r) => setImmediate(r))
+  assert.ok(f.handlers.has('team'))
+  assert.match(warned.join('\n'), /boom/)
+  assert.match((await f.run(['help'])).stdout, /ccc team/)
+})
+
 test('help prints usage, also with no argument', async () => {
   const f = fakeCtx()
   host.activate(f.ctx)

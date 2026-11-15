@@ -90,12 +90,12 @@ External review: auto
 - Create: `lib/teams.js`, `test/teams.test.js`
 - Modify: `dist/host.js`
 
-- [ ] `lib/teams.js`: load and save team records in `ctx.storage`; `teamOfTab(tabId)` (the plugin's room whose
+- [x] `lib/teams.js`: load and save team records in `ctx.storage`; `teamOfTab(tabId)` (the plugin's room whose
       members include that tab, via `ctx.rooms.list` + `members`), `requireCoordinator(call)`; ended rooms marked;
       records whose room no longer exists dropped on load
-- [ ] an unknown tab, a tab in another plugin's room and a foreign id all answer the same text
-- [ ] write tests: resolution, coordinator vs member vs outsider, record load/save, dropped records
-- [ ] run tests - must pass before next task
+- [x] an unknown tab, a tab in another plugin's room and a foreign id all answer the same text
+- [x] write tests: resolution, coordinator vs member vs outsider, record load/save, dropped records
+- [x] run tests - must pass before next task
 
 ### Task 3: Lifecycle commands and kickoff checks [model: opus]
 
