@@ -74,15 +74,15 @@ External review: auto
 - Create: `plugin.json`, `package.json`, `LICENSE`, `README.md`, `dist/host.js`, `icons/team.svg`, `.gitignore`
 - Create: `test/fake-ctx.js`, `test/host.test.js`
 
-- [ ] stub `panels/team.html` and `skills/team-tool/SKILL.md` so the manifest is valid from the start
-- [ ] `plugin.json`: id `bronos.team`, name Team, version 0.1.0, api 1, MIT, author Oleg Bronzov, the `team` CLI
+- [x] stub `panels/team.html` and `skills/team-tool/SKILL.md` so the manifest is valid from the start
+- [x] `plugin.json`: id `bronos.team`, name Team, version 0.1.0, api 1, MIT, author Oleg Bronzov, the `team` CLI
       contribution (usage from design §2, stdin + stdinDash for `ask -`), one panel (`team`, right zone), one skill
       (`team-tool`), a setting `exportDir` (string, default empty); description says "Needs cc-cockpit 0.18.1"
-- [ ] `dist/host.js`: activate, refuse cleanly when `typeof ctx.rooms !== 'object'` (an older app), register the CLI
+- [x] `dist/host.js`: activate, refuse cleanly when `typeof ctx.rooms !== 'object'` (an older app), register the CLI
       handler with `help` working; `package.json` with `"test": "node --test test/"`
-- [ ] `test/fake-ctx.js`: the fake ctx described in Testing Strategy, reusable by every later task
-- [ ] write tests: activation, `help`, the older-app refusal
-- [ ] run tests - must pass before next task
+- [x] `test/fake-ctx.js`: the fake ctx described in Testing Strategy, reusable by every later task
+- [x] write tests: activation, `help`, the older-app refusal
+- [x] run tests - must pass before next task
 
 ### Task 2: Team records and caller resolution [model: opus]
 

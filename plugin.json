@@ -1,0 +1,44 @@
+{
+  "id": "bronos.team",
+  "name": "Team",
+  "version": "0.1.0",
+  "api": 1,
+  "description": "Run a team of Claude tabs on cc-cockpit Rooms: start a team, hire members from a kickoff file, hear their questions, watch cost and time, export the result. A tool, not a flow. Needs cc-cockpit 0.18.1.",
+  "author": "Oleg Bronzov",
+  "license": "MIT",
+  "main": "dist/host.js",
+  "contributes": {
+    "cli": [
+      {
+        "name": "team",
+        "summary": "Start and run a team of Claude tabs (one room)",
+        "usage": "team start \"<title>\" [--as <name>] | hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--coordinator] | invite <name> [--coordinator] | fire <name> | ask \"<question>\" | ask - | mark \"<label>\" | list [--json] | stats [--json] | end [--export <dir>] | help",
+        "stdin": true,
+        "stdinDash": true
+      }
+    ],
+    "panels": [
+      {
+        "id": "team",
+        "title": "Team",
+        "entry": "panels/team.html",
+        "icon": "icons/team.svg",
+        "defaultZone": "right"
+      }
+    ],
+    "skills": [{ "id": "team-tool", "dir": "skills/team-tool" }],
+    "settings": {
+      "app": {
+        "type": "object",
+        "properties": {
+          "exportDir": {
+            "type": "string",
+            "title": "Export folder",
+            "description": "Where `ccc team end` writes the export of a team (a new folder per team). Empty: no export unless --export names a folder.",
+            "default": ""
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,461 @@
+'use strict'
+// A fake plugin `ctx` for every test of this plugin. It follows the real API of cc-cockpit's
+// src/sdk/types.ts (the release with Rooms) and its guide (`ccc guide rooms`, `api`): method names,
+// arguments, return shapes and which calls reject. It records what the host did so a test can assert on
+// it. What it cannot know is main's exact refusal text: a refusal here rejects with an Error naming the
+// method and the rule (as the real one does), so tests match on the rule, never on a whole message.
+//
+// Covered: ctx.rooms (create/list/end/delete/open/invite/members/remove/send/docs/log with `seq` and `at`,
+// the caps and checks types.ts documents), ctx.sessions (full SessionInfo, onChange with the whole list,
+// open/focus, the shared 5 opens a minute), ctx.cli (declared names only, one handler per name),
+// ctx.storage, ctx.notify, ctx.panels, ctx.settings, ctx.schedule. Not modelled: the delivery gate's
+// timing (Stop pointers, the 5-stops cap, auto-pause) and the 30 s abort: a test sets a session's
+// status, `typed` or the room's `paused` to choose a send's path, and passes its own `signal`.
+// Plugin doc reads and writes are not logged (the real log's fields for them are not documented).
+
+const fs = require('node:fs')
+const path = require('node:path')
+
+const MANIFEST = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin.json'), 'utf8'))
+
+const NAME_RE = /^[a-z][a-z0-9-]{0,30}$/
+const RESERVED_NAMES = new Set(['all', 'plugin', 'person', 'user', 'system'])
+const MODELS = new Set(['haiku', 'sonnet', 'opus', 'fable'])
+const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+const DOC_PART_RE = /^[A-Za-z0-9._-]+$/
+const DOC_MAX = 256 * 1024
+const ROOM_DOCS_MAX = 20 * 1024 * 1024
+const SEND_MAX = 20000
+const LOG_MAX = 1000
+const MINUTE = 60_000
+// Bidi controls and invisible format characters.
+const BIDI_INVISIBLE = '\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2069\\ufeff'
+// Control characters but tab, LF and CR (a lone CR is checked apart).
+const BAD_DOC_CHARS = new RegExp(`[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f${BIDI_INVISIBLE}]`)
+const BAD_TITLE_CHARS = new RegExp(`["'\`()\\[\\]{}<>\\u0000-\\u001f\\u007f${BIDI_INVISIBLE}]`)
+
+function fakeCtx(opts = {}) {
+  const projectDir = opts.projectDir || '/proj'
+  const handlers = new Map()
+  const store = new Map()
+  const notices = [] // { text, options }
+  const posts = []
+  const schedules = []
+  const opens = [] // every rooms.open / sessions.open, with the options the host passed
+  const panelListeners = new Map()
+  const actionListeners = new Map()
+  const headers = new Map()
+  const shownPanels = []
+  const sessionListeners = new Set()
+  const settingsListeners = new Set()
+  const sessions = new Map() // tabId -> SessionInfo
+  // roomId -> { id, title, createdAt, endedAt?, paused, members: Map(name -> { name, coordinator, tabId?, held }),
+  //            invites: Map(code -> { name, coordinator, expiresAt }), docs: Map(path -> text), log: [], seq, sends: [] }
+  const rooms = new Map()
+  const caps = {
+    rooms: opts.maxRooms ?? 5,
+    endedRooms: 50,
+    members: opts.maxMembers ?? 20,
+    invites: 20,
+    opensPerMinute: opts.opensPerMinute ?? 5,
+    roomSendsPerMinute: opts.roomSendsPerMinute ?? 60,
+    heldPerMember: 100,
+  }
+  const clock = { t: opts.now ?? 1_700_000_000_000 }
+  const now = () => clock.t
+  const openTimes = []
+  let nextRoom = 1
+  let nextTab = 1
+  let nextCode = 1
+
+  const refuse = (method, rule) => new Error(`${method}: ${rule}`)
+  const room = (method, id) => {
+    const r = rooms.get(id)
+    if (!r) throw refuse(method, 'no such room')
+    return r
+  }
+  const live = (method, id) => {
+    const r = room(method, id)
+    if (r.endedAt !== undefined) throw refuse(method, 'the room ended')
+    return r
+  }
+  const log = (r, entry) => {
+    r.log.push({ seq: ++r.seq, at: now(), ...entry })
+  }
+  const checkName = (method, name) => {
+    if (typeof name !== 'string' || !NAME_RE.test(name) || RESERVED_NAMES.has(name)) {
+      throw refuse(method, 'name must match ^[a-z][a-z0-9-]{0,30}$ and not be all, plugin, person, user or system')
+    }
+  }
+  const emitSessions = () => {
+    const list = [...sessions.values()].map((s) => structuredClone(s))
+    for (const fn of sessionListeners) fn(list)
+  }
+  const setSessionRoom = (tabId, r, m) => {
+    const s = sessions.get(tabId)
+    if (!s) return
+    if (r && m) {
+      s.room = { title: r.title, name: m.name, coordinator: m.coordinator }
+      if (m.held > 0) s.held = m.held
+      else delete s.held
+    } else {
+      delete s.room
+      delete s.held
+    }
+  }
+
+  /** ctx.sessions.open's checks and its 5 opens a minute, shared with rooms.open. */
+  const openTab = (method, o = {}) => {
+    if (o.prompt !== undefined && (typeof o.prompt !== 'string' || /^[/!#&]/.test(o.prompt))) {
+      throw refuse(method, 'prompt may not start with "/", "!", "#" or "&"')
+    }
+    if (o.model !== undefined && !MODELS.has(o.model)) throw refuse(method, `unknown model: ${o.model}`)
+    if (o.effort !== undefined && !EFFORTS.has(o.effort)) throw refuse(method, `unknown effort: ${o.effort}`)
+    const cwd = o.cwd === undefined ? projectDir : path.resolve(projectDir, o.cwd)
+    if (cwd !== projectDir && !cwd.startsWith(projectDir + path.sep)) {
+      throw refuse(method, 'cwd must be inside the project folder')
+    }
+    while (openTimes.length && openTimes[0] <= now() - MINUTE) openTimes.shift()
+    if (openTimes.length >= caps.opensPerMinute) {
+      throw refuse(method, `at most ${caps.opensPerMinute} tabs a minute (opensPerMinute)`)
+    }
+    openTimes.push(now())
+    const tabId = `tab${nextTab++}`
+    sessions.set(tabId, { tabId, status: 'starting', cwd, notes: [], files: [], typed: false })
+    return { tabId, cwd }
+  }
+
+  const checkDocPath = (method, p) => {
+    const parts = typeof p === 'string' ? p.split('/') : []
+    let below
+    if (parts[0] === 'shared') below = parts.slice(1)
+    else if (parts[0] === 'members' && parts.length >= 2 && NAME_RE.test(parts[1])) below = parts.slice(2)
+    if (!below || below.length < 1 || below.length > 4 || below.some((x) => x === '.' || x === '..' || !DOC_PART_RE.test(x))) {
+      throw refuse(method, `bad doc path: ${p} (shared/... or members/<name>/..., at most four parts of [A-Za-z0-9._-])`)
+    }
+  }
+
+  /** The path a real send would take for one member, from the state a test set up. */
+  const deliver = (r, m) => {
+    if (m.held >= caps.heldPerMember) return { to: m.name, path: 'refused', why: 'queue full' }
+    m.held++
+    if (r.paused) return { to: m.name, path: 'held', why: 'paused' }
+    const s = m.tabId && sessions.get(m.tabId)
+    if (!s) return { to: m.name, path: 'held', why: 'no-tab' }
+    if (s.typed) return { to: m.name, path: 'held', why: 'typed' }
+    if (s.status !== 'waiting') return { to: m.name, path: 'held', why: 'not-waiting', status: s.status }
+    return { to: m.name, path: 'delivered' }
+  }
+
+  const roomsApi = {
+    async create(options) {
+      const title = options && options.title
+      if (typeof title !== 'string' || title.length < 1 || title.length > 60 || BAD_TITLE_CHARS.test(title)) {
+        throw refuse('rooms.create', 'title is 1-60 characters on one line, no quote, bracket, control or bidi character')
+      }
+      const all = [...rooms.values()]
+      if (all.filter((r) => r.endedAt === undefined).length >= caps.rooms) {
+        throw refuse('rooms.create', `at most ${caps.rooms} rooms (roomsPerProject)`)
+      }
+      if (all.filter((r) => r.endedAt !== undefined).length >= caps.endedRooms) {
+        throw refuse('rooms.create', `at most ${caps.endedRooms} ended rooms kept: delete one first`)
+      }
+      const id = `room${nextRoom++}`
+      rooms.set(id, {
+        id,
+        title,
+        createdAt: now(),
+        paused: false,
+        members: new Map(),
+        invites: new Map(),
+        docs: new Map(),
+        log: [],
+        seq: 0,
+        sends: [],
+      })
+      log(rooms.get(id), { type: 'create', title })
+      return { id }
+    },
+    async list() {
+      return [...rooms.values()].map((r) => ({
+        id: r.id,
+        title: r.title,
+        createdAt: r.createdAt,
+        ...(r.endedAt !== undefined ? { endedAt: r.endedAt } : {}),
+        paused: r.paused,
+        members: r.members.size,
+      }))
+    },
+    async end(id) {
+      const r = live('rooms.end', id)
+      for (const m of r.members.values()) if (m.tabId) setSessionRoom(m.tabId, null)
+      r.members.clear()
+      r.invites.clear()
+      r.endedAt = now()
+      log(r, { type: 'end' })
+      emitSessions()
+    },
+    async delete(id) {
+      const r = room('rooms.delete', id)
+      if (r.endedAt === undefined) throw refuse('rooms.delete', 'only an ended room can be deleted')
+      rooms.delete(id)
+    },
+    async open(id, options = {}) {
+      const r = live('rooms.open', id)
+      checkName('rooms.open', options.name)
+      if (r.members.has(options.name)) throw refuse('rooms.open', `${options.name} is already a member`)
+      if (r.members.size >= caps.members) throw refuse('rooms.open', `at most ${caps.members} members a room (membersPerRoom)`)
+      const { tabId, cwd } = openTab('rooms.open', options)
+      const m = { name: options.name, coordinator: options.coordinator === true, tabId, held: 0 }
+      r.members.set(m.name, m)
+      setSessionRoom(tabId, r, m)
+      opens.push({ via: 'rooms.open', roomId: id, tabId, ...structuredClone(options), cwd })
+      log(r, { type: 'join', member: m.name, coordinator: m.coordinator })
+      emitSessions()
+      return { tabId }
+    },
+    async invite(id, options = {}) {
+      const r = live('rooms.invite', id)
+      checkName('rooms.invite', options.name)
+      if (r.members.has(options.name)) throw refuse('rooms.invite', `${options.name} is already a member`)
+      for (const [c, inv] of r.invites) if (inv.expiresAt <= now()) r.invites.delete(c)
+      if (r.invites.size >= caps.invites) throw refuse('rooms.invite', `at most ${caps.invites} invites waiting`)
+      const code = `inv${nextCode++}`
+      const expiresAt = now() + 10 * MINUTE
+      r.invites.set(code, { name: options.name, coordinator: options.coordinator === true, expiresAt })
+      log(r, { type: 'invite', member: options.name, coordinator: options.coordinator === true })
+      return { code, expiresAt }
+    },
+    async members(id) {
+      const r = room('rooms.members', id)
+      return [...r.members.values()].map((m) => ({
+        name: m.name,
+        coordinator: m.coordinator,
+        ...(m.tabId ? { tabId: m.tabId } : {}),
+        held: m.held,
+      }))
+    },
+    async remove(id, name) {
+      const r = live('rooms.remove', id)
+      const m = r.members.get(name)
+      if (!m) throw refuse('rooms.remove', `no member ${name}`)
+      r.members.delete(name)
+      if (m.tabId) setSessionRoom(m.tabId, null)
+      log(r, { type: 'leave', member: name, why: 'removed' })
+      emitSessions()
+    },
+    async send(id, to, text) {
+      const r = live('rooms.send', id)
+      if (typeof text !== 'string' || text.length > SEND_MAX) throw refuse('rooms.send', `at most ${SEND_MAX} characters`)
+      const recipients = to === 'all' ? [...r.members.values()] : [r.members.get(to)].filter(Boolean)
+      // The room's 60 sends a minute, `all` once per recipient.
+      while (r.sends.length && r.sends[0] <= now() - MINUTE) r.sends.shift()
+      if (r.sends.length + recipients.length > caps.roomSendsPerMinute) {
+        throw refuse('rooms.send', `at most ${caps.roomSendsPerMinute} sends a minute in a room`)
+      }
+      for (let i = 0; i < recipients.length; i++) r.sends.push(now())
+      const answers = to !== 'all' && recipients.length === 0 ? [{ to, path: 'gone' }] : recipients.map((m) => deliver(r, m))
+      for (const m of recipients) if (m.tabId) setSessionRoom(m.tabId, r, m)
+      log(r, { type: 'send', from: 'plugin', to, text, delivery: structuredClone(answers) })
+      emitSessions()
+      return answers
+    },
+    docs: {
+      async list(id) {
+        const r = room('rooms.docs.list', id)
+        return [...r.docs.entries()].map(([p, text]) => ({ path: p, size: Buffer.byteLength(text, 'utf8') }))
+      },
+      async get(id, p) {
+        const r = room('rooms.docs.get', id)
+        checkDocPath('rooms.docs.get', p)
+        // Refused equals missing: one answer for both, never undefined.
+        if (!r.docs.has(p)) throw refuse('rooms.docs.get', `no such doc: ${p}`)
+        return r.docs.get(p)
+      },
+      async put(id, p, text) {
+        const r = room('rooms.docs.put', id)
+        checkDocPath('rooms.docs.put', p)
+        if (typeof text !== 'string' || BAD_DOC_CHARS.test(text) || /\r(?!\n)/.test(text)) {
+          throw refuse('rooms.docs.put', 'a doc is text with no control, bidi or invisible format character but tab and line breaks')
+        }
+        const size = Buffer.byteLength(text, 'utf8')
+        if (size > DOC_MAX) throw refuse('rooms.docs.put', 'a doc is at most 256 KiB')
+        let total = size
+        for (const [q, t] of r.docs) if (q !== p) total += Buffer.byteLength(t, 'utf8')
+        if (total > ROOM_DOCS_MAX) throw refuse('rooms.docs.put', 'a room holds at most 20 MiB of docs')
+        r.docs.set(p, text)
+      },
+    },
+    async log(id, options = {}) {
+      const r = room('rooms.log', id)
+      const limit = Math.max(1, Math.min(LOG_MAX, options.limit ?? LOG_MAX))
+      if (options.since !== undefined) {
+        // The OLDEST entries after `since`; `more` when newer ones remain.
+        const rest = r.log.filter((e) => e.seq > options.since)
+        return { entries: structuredClone(rest.slice(0, limit)), more: rest.length > limit }
+      }
+      // Without `since`: the NEWEST `limit`; `more` when older ones were left out.
+      return { entries: structuredClone(r.log.slice(-limit)), more: r.log.length > limit }
+    },
+  }
+
+  const declaredPanel = (method, panelId) => {
+    if (!(MANIFEST.contributes.panels || []).some((p) => p.id === panelId)) throw new Error(`${method}: undeclared panel ${panelId}`)
+  }
+
+  const ctx = {
+    api: 1,
+    pluginId: MANIFEST.id,
+    projectDir,
+    dataDir: opts.dataDir || `/data/plugin-data/p1/${MANIFEST.id}`,
+    settings: { project: opts.project || {}, app: opts.app || {} },
+    onSettingsChange(fn) {
+      settingsListeners.add(fn)
+      return () => settingsListeners.delete(fn)
+    },
+    log: { info() {}, warn() {}, error() {} },
+    storage: {
+      get: async (k) => (store.has(k) ? structuredClone(store.get(k)) : undefined),
+      set: async (k, v) => void store.set(k, structuredClone(v)),
+      delete: async (k) => void store.delete(k),
+      keys: async () => [...store.keys()],
+    },
+    async notify(text, options) {
+      notices.push({ text, options })
+      return { clicked: false }
+    },
+    schedule(seconds, fn) {
+      const entry = { seconds, fn }
+      schedules.push(entry)
+      return () => {
+        const i = schedules.indexOf(entry)
+        if (i >= 0) schedules.splice(i, 1)
+      }
+    },
+    cli: {
+      register(name, fn) {
+        if (!(MANIFEST.contributes.cli || []).some((c) => c.name === name)) {
+          throw new Error(`cli.register: ${name} is not declared in contributes.cli`)
+        }
+        if (handlers.has(name)) throw new Error(`cli.register: ${name} already has a handler`)
+        handlers.set(name, fn)
+        return () => handlers.delete(name)
+      },
+    },
+    sessions: {
+      list: async () => [...sessions.values()].map((s) => structuredClone(s)),
+      // The real listener gets the whole list (at most 4 times a second; the fake does not throttle).
+      onChange(fn) {
+        sessionListeners.add(fn)
+        return () => sessionListeners.delete(fn)
+      },
+      focus: async (tabId) => sessions.has(tabId),
+      async open(options = {}) {
+        const { tabId, cwd } = openTab('sessions.open', options)
+        opens.push({ via: 'sessions.open', tabId, ...structuredClone(options), cwd })
+        emitSessions()
+        return { tabId }
+      },
+    },
+    panels: {
+      post(panelId, message, options) {
+        declaredPanel('panels.post', panelId)
+        posts.push([panelId, structuredClone(message), options])
+      },
+      onMessage(panelId, fn) {
+        declaredPanel('panels.onMessage', panelId)
+        panelListeners.set(panelId, fn)
+        return () => panelListeners.delete(panelId)
+      },
+      show(panelId) {
+        declaredPanel('panels.show', panelId)
+        shownPanels.push(panelId)
+      },
+      header(panelId, header) {
+        declaredPanel('panels.header', panelId)
+        headers.set(panelId, header)
+      },
+      onAction(panelId, fn) {
+        declaredPanel('panels.onAction', panelId)
+        actionListeners.set(panelId, fn)
+        return () => actionListeners.delete(panelId)
+      },
+    },
+  }
+  if (opts.rooms !== false) ctx.rooms = roomsApi
+
+  const cliEntry = (MANIFEST.contributes.cli || []).find((c) => c.name === 'team') || {}
+
+  return {
+    ctx,
+    handlers,
+    notices,
+    posts,
+    schedules,
+    opens,
+    headers,
+    shownPanels,
+    panelListeners,
+    actionListeners,
+    settingsListeners,
+    rooms,
+    sessions,
+    store,
+    caps,
+    clock,
+    /** Move the fake clock (rate caps, `at`, invite expiry). */
+    advance(ms) {
+      clock.t += ms
+    },
+    /**
+     * Run `ccc team ...` as the app would. `call.tabId` absent: a shell tab or outside any tab. Stdin
+     * reaches the handler as the app passes it: only with the manifest's `stdin`, and with `stdinDash`
+     * only when an argument is `-` (else `''`).
+     */
+    async run(argv, call = {}) {
+      const h = handlers.get('team')
+      if (!h) throw new Error('team handler not registered')
+      let stdin = call.stdin ?? ''
+      if (!cliEntry.stdin || (cliEntry.stdinDash && !argv.includes('-'))) stdin = ''
+      return h(argv, { cwd: projectDir, signal: new AbortController().signal, ...call, stdin })
+    },
+    /** Change a session (status, typed, ...) and tell onChange listeners the whole list, as the app does. */
+    emitSession(info) {
+      sessions.set(info.tabId, {
+        ...(sessions.get(info.tabId) || { status: 'idle', cwd: projectDir, notes: [], files: [], typed: false }),
+        ...info,
+      })
+      emitSessions()
+    },
+    /** A tab joining with an invite code, as `ccc room join <code>` run in that tab would. */
+    join(code, tabId) {
+      for (const r of rooms.values()) {
+        const inv = r.invites.get(code)
+        if (!inv) continue
+        r.invites.delete(code)
+        if (inv.expiresAt <= now() || r.endedAt !== undefined) throw new Error('invite expired')
+        const m = { name: inv.name, coordinator: inv.coordinator, tabId, held: 0 }
+        r.members.set(m.name, m)
+        setSessionRoom(tabId, r, m)
+        log(r, { type: 'join', member: m.name, coordinator: m.coordinator })
+        emitSessions()
+        return
+      }
+      throw new Error('no such invite')
+    },
+    /** Pause or resume a room, as the person (or the loop guard) would. */
+    setPaused(roomId, paused) {
+      const r = rooms.get(roomId)
+      r.paused = paused
+      log(r, { type: paused ? 'pause' : 'resume' })
+    },
+    /** Append a log entry as Rooms would (for metrics tests): `type` is required, `at` defaults to the clock. */
+    pushLog(roomId, entry) {
+      if (!entry || typeof entry.type !== 'string') throw new Error('pushLog: an entry needs a type')
+      const r = rooms.get(roomId)
+      r.log.push({ at: now(), ...entry, seq: ++r.seq })
+    },
+  }
+}
+
+module.exports = { fakeCtx }
