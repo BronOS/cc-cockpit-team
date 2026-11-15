@@ -28,11 +28,19 @@ const ROOM_DOCS_MAX = 20 * 1024 * 1024
 const SEND_MAX = 20000
 const LOG_MAX = 1000
 const MINUTE = 60_000
-// Bidi controls and invisible format characters.
-const BIDI_INVISIBLE = '\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2069\\ufeff'
-// Control characters but tab, LF and CR (a lone CR is checked apart).
-const BAD_DOC_CHARS = new RegExp(`[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f${BIDI_INVISIBLE}]`)
-const BAD_TITLE_CHARS = new RegExp(`["'\`()\\[\\]{}<>\\u0000-\\u001f\\u007f${BIDI_INVISIBLE}]`)
+// Rooms' character rules, as cc-cockpit's src/shared/session-name.ts has them: CONTROL (C0, DEL, C1, bidi marks and
+// controls, line/paragraph separators, invisible operators, BOM); a doc or message also refuses every other format
+// character (Unicode Cf) but ZWNJ and ZWJ (HIDDEN_TEXT), with tab, LF and CRLF allowed. A title (room-names.ts)
+// refuses CONTROL and quotes and brackets, typographic ones included.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200b\u200e\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/
+const HIDDEN_TEXT = new RegExp(`${CONTROL.source}|(?![\\u200c\\u200d])\\p{Cf}`, 'u')
+const badDocText = (text) => {
+  for (const ch of text.replace(/\r\n/g, '\n')) if (ch !== '\t' && ch !== '\n' && HIDDEN_TEXT.test(ch)) return true
+  return false
+}
+const TITLE_FORBIDDEN = new Set([...'"\'`'+String.fromCharCode(0x201c, 0x201d, 0x201e, 0x201f, 0x2018, 0x2019, 0x201a, 0x201b, 0xab, 0xbb, 0x2039, 0x203a)+'()[]{}<>'])
+const badTitle = (title) => [...title].some((ch) => CONTROL.test(ch) || TITLE_FORBIDDEN.has(ch))
 
 function fakeCtx(opts = {}) {
   const projectDir = opts.projectDir || '/proj'
@@ -150,7 +158,7 @@ function fakeCtx(opts = {}) {
   const roomsApi = {
     async create(options) {
       const title = options && options.title
-      if (typeof title !== 'string' || title.length < 1 || title.length > 60 || BAD_TITLE_CHARS.test(title)) {
+      if (typeof title !== 'string' || title.length < 1 || title.length > 60 || badTitle(title)) {
         throw refuse('rooms.create', 'title is 1-60 characters on one line, no quote, bracket, control or bidi character')
       }
       const all = [...rooms.values()]
@@ -247,6 +255,7 @@ function fakeCtx(opts = {}) {
     async send(id, to, text) {
       const r = live('rooms.send', id)
       if (typeof text !== 'string' || text.length > SEND_MAX) throw refuse('rooms.send', `at most ${SEND_MAX} characters`)
+      if (badDocText(text)) throw refuse('rooms.send', 'a message is text with no control, bidi or invisible format character but tab and line breaks')
       const recipients = to === 'all' ? [...r.members.values()] : [r.members.get(to)].filter(Boolean)
       // The room's 60 sends a minute, `all` once per recipient.
       while (r.sends.length && r.sends[0] <= now() - MINUTE) r.sends.shift()
@@ -275,7 +284,7 @@ function fakeCtx(opts = {}) {
       async put(id, p, text) {
         const r = room('rooms.docs.put', id)
         checkDocPath('rooms.docs.put', p)
-        if (typeof text !== 'string' || BAD_DOC_CHARS.test(text) || /\r(?!\n)/.test(text)) {
+        if (typeof text !== 'string' || badDocText(text)) {
           throw refuse('rooms.docs.put', 'a doc is text with no control, bidi or invisible format character but tab and line breaks')
         }
         const size = Buffer.byteLength(text, 'utf8')

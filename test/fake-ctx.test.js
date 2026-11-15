@@ -11,7 +11,7 @@ test('rooms.create takes { title } and answers { id }; list has the RoomInfo fie
   assert.equal(typeof id, 'string')
   assert.deepEqual(rest, {})
   assert.deepEqual(await ctx.rooms.list(), [{ id, title: 'API work', createdAt: clock.t, paused: false, members: 0 }])
-  for (const title of ['', 'x'.repeat(61), 'a "quoted" one', 'two\nlines', 'a [b]', 'ab‮']) {
+  for (const title of ['', 'x'.repeat(61), 'a "quoted" one', 'two\nlines', 'a [b]', 'ab\u202e']) {
     await assert.rejects(ctx.rooms.create({ title }), /rooms\.create: title/)
   }
   await assert.rejects(ctx.rooms.create('plain string'), /rooms\.create: title/)
@@ -171,4 +171,17 @@ test('run passes stdin only for a `-` argument (stdinDash)', async () => {
   await f.run(['ask', '-'], { stdin: 'text', tabId: 'tab1' })
   assert.equal(got.stdin, 'text')
   assert.equal(got.tabId, 'tab1')
+})
+
+test("rooms text rules follow cc-cockpit's HIDDEN_TEXT: Cf refused (but ZWNJ/ZWJ), CRLF allowed, lone CR refused; typographic quotes refused in a title", async () => {
+  const f = fakeCtx()
+  const { id } = await f.ctx.rooms.create({ title: 'T' })
+  const c = (cp) => String.fromCodePoint(cp)
+  await f.ctx.rooms.docs.put(id, 'shared/a.md', 'a\r\nb\tc' + c(0x200d))
+  for (const bad of ['a' + c(0xad), 'a' + c(0xe0041), 'a\rb', 'a' + c(0x85)]) {
+    await assert.rejects(f.ctx.rooms.docs.put(id, 'shared/a.md', bad), /rooms\.docs\.put/)
+  }
+  await f.ctx.rooms.open(id, { name: 'dev' })
+  await assert.rejects(f.ctx.rooms.send(id, 'dev', 'x' + c(0x202e)), /rooms\.send/)
+  await assert.rejects(f.ctx.rooms.create({ title: 'a' + c(0x201c) + 'b' }), /rooms\.create/)
 })

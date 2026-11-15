@@ -103,19 +103,19 @@ External review: auto
 - Create: `lib/kickoff.js`, `lib/commands.js`, `test/kickoff.test.js`, `test/commands.test.js`
 - Modify: `dist/host.js`
 
-- [ ] `lib/kickoff.js`: resolve against the caller's cwd, `lstat` regular file, size ≤ 256 KiB, UTF-8 decode with
+- [x] `lib/kickoff.js`: resolve against the caller's cwd, `lstat` regular file, size ≤ 256 KiB, UTF-8 decode with
       `fatal`, Rooms' character rules; clear refusal texts
-- [ ] `start "<title>" [--as <name>]` (default `lead`; refused for a tab already in a room): create room, coordinator
+- [x] `start "<title>" [--as <name>]` (default `lead`; refused for a tab already in a room): create room, coordinator
       invite for that name, print the `ccc room join` line
-- [ ] `hire`: refuse a name already in the team before writing; seed `members/<name>/kickoff.md`, then `ctx.rooms.open`
+- [x] `hire`: refuse a name already in the team before writing; seed `members/<name>/kickoff.md`, then `ctx.rooms.open`
       with the fixed prompt, model, effort, cwd, coordinator; on a failed open remove the seeded doc (put an empty
       tombstone if Rooms has no delete: check, and note it); kickoff resolved against the caller's cwd
       `invite`, `fire`, `list [--json]`, `end` (no export yet), `help`
-- [ ] a Rooms refusal (cap, name, rate) passes through in Rooms' own words
-- [ ] start `test/flow.test.js`, the integration test through the fake ctx (start, hire two); later tasks extend it
-- [ ] write tests: each command's success, coordinator-only refusals, kickoff refusals before any open, cap refusals,
+- [x] a Rooms refusal (cap, name, rate) passes through in Rooms' own words
+- [x] start `test/flow.test.js`, the integration test through the fake ctx (start, hire two); later tasks extend it
+- [x] write tests: each command's success, coordinator-only refusals, kickoff refusals before any open, cap refusals,
       `start` from a tab already in a room, a repeated name, a failed open cleaning up
-- [ ] run tests - must pass before next task
+- [x] run tests - must pass before next task
 
 ### Task 4: Questions to the person [model: sonnet]
 
