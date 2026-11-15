@@ -181,18 +181,19 @@ External review: auto
 
 **Files:**
 - Create: `lib/panel.js`, `test/panel.test.js`
-- Modify: `dist/host.js`
+- Modify: `dist/host.js`, `lib/commands.js` (hiring shared as `createHiring`), `lib/teams.js` (`onChange`),
+  `test/fake-ctx.js` (post's view and size checks, `page`), `test/host.test.js`
 
-- [ ] the panel drops posts while hidden: the host re-pushes full state when a view connects and answers one view with
+- [x] the panel drops posts while hidden: the host re-pushes full state when a view connects and answers one view with
       `post(..., { view })` (`from.view`)
-- [ ] panel port protocol: the host pushes state (teams, members with status/tool/model/cost/context/waiting,
+- [x] panel port protocol: the host pushes state (teams, members with status/tool/model/cost/context/waiting,
       questions, activity page, docs list, metrics) on change, throttled
-- [ ] actions, each checked again in the host: new team (opens a lead tab as coordinator via `ctx.rooms.open`, optional
+- [x] actions, each checked again in the host: new team (opens a lead tab as coordinator via `ctx.rooms.open`, optional
       kickoff file resolved against the project folder), hire, mark, end and export, delete, reply, done, fire, focus a
       member's tab, copy invite, read a doc (shown read-only in the panel: no API opens core's room view)
-- [ ] activity paging and filters (member, kind) served from the room log
-- [ ] write tests: state shape, re-push on connect, per-view replies, each action's success and refusal, throttling
-- [ ] run tests - must pass before next task
+- [x] activity paging and filters (member, kind) served from the room log
+- [x] write tests: state shape, re-push on connect, per-view replies, each action's success and refusal, throttling
+- [x] run tests - must pass before next task
 
 ### Task 9: Panel page [model: sonnet]
 
@@ -202,6 +203,8 @@ External review: auto
 - [ ] layout per design §7 following `ccc guide style` (component stylesheet, slots, relative URLs)
 - [ ] state always marked by an icon or a word (never by colour alone); member text rendered as text, never HTML
 - [ ] forms: New team and Hire (fields as `hire`, kickoff path), Reply; confirm End and Delete in-page (no `confirm()`)
+- [ ] follow the port protocol in `lib/panel.js`: `ping` (with `selected`) every 30 s while shown, else the view is
+      forgotten; on a `logSeq` move re-ask the activity and docs list only, never a doc's text (a read logs a `doc-read`)
 - [ ] keep pure helpers (formatting, filtering) in `panels/view-model.js` and test them in `test/panel-page.test.js`
 - [ ] a grep test: no `innerHTML`, `outerHTML`, `insertAdjacentHTML` or `document.write` in `panels/`
 - [ ] run tests - must pass before next task

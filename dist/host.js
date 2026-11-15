@@ -5,9 +5,10 @@
 
 const { createTeams } = require('../lib/teams.js')
 const { createQuestions } = require('../lib/questions.js')
-const { createCommands, USAGE } = require('../lib/commands.js')
+const { createCommands, createHiring, USAGE } = require('../lib/commands.js')
 const { createMetrics } = require('../lib/metrics.js')
 const { createEnding } = require('../lib/export.js')
+const { createPanel } = require('../lib/panel.js')
 
 const OLD_APP = 'Team needs cc-cockpit 0.18.1 or newer (Rooms): update the app.'
 
@@ -27,6 +28,24 @@ exports.activate = (ctx) => {
         return { stderr: `${OLD_APP}\n`, code: 1 }
       }),
     )
+    // The declared Team panel still opens: tell its page why it is empty, and answer every request so none waits.
+    if (ctx.panels && typeof ctx.panels.onMessage === 'function') {
+      disposers.push(
+        ctx.panels.onMessage('team', (m, from) => {
+          if (!m || typeof m !== 'object' || typeof m.type !== 'string') return
+          const view = from && typeof from.view === 'string' ? from.view : 'desktop'
+          const message =
+            m.type === 'hello' || m.type === 'select' || m.type === 'ping'
+              ? { type: 'state', teams: [], team: null, exportDir: null, error: OLD_APP }
+              : { type: 'result', action: m.type.slice(0, 40), req: typeof m.req === 'string' || Number.isSafeInteger(m.req) ? m.req : undefined, ok: false, error: OLD_APP }
+          try {
+            ctx.panels.post('team', message, { view })
+          } catch (err) {
+            ctx.log.warn(`team panel: ${(err && err.message) || err}`)
+          }
+        }),
+      )
+    }
     return
   }
   const teams = createTeams(ctx)
@@ -40,9 +59,16 @@ exports.activate = (ctx) => {
   metrics = createMetrics(ctx, teams)
   // End (with its export) and Delete: one instance too, its per-team lock refuses an End from the CLI and the panel at once.
   const ending = createEnding(ctx, teams, metrics)
-  instances = { teams, questions, metrics, ending }
+  // Hiring too: its per-name lock covers `ccc team hire` and the panel's Hire and New team.
+  const hiring = createHiring(ctx, metrics)
+  instances = { teams, questions, metrics, ending, hiring }
   metrics.start().catch((err) => ctx.log.warn(`team metrics: ${err && err.message}`))
-  disposers.push(ctx.cli.register('team', createCommands(ctx, teams, questions, metrics, ending)))
+  disposers.push(ctx.cli.register('team', createCommands(ctx, teams, questions, metrics, ending, hiring)))
+  // The panel's backend on the same instances (design §7): it checks every action again.
+  const panel = createPanel(ctx, instances)
+  panel.start()
+  instances.panel = panel
+  disposers.push(() => panel.stop())
 }
 
 exports.deactivate = () => {

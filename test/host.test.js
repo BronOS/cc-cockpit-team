@@ -63,6 +63,15 @@ test('an older app without ctx.rooms: help works, everything else refuses cleanl
   const r = await f.run(['list'])
   assert.equal(r.code, 1)
   assert.match(r.stderr, /0\.18\.1/)
+  // The declared panel's page is told why it is empty, and a request is answered, not left waiting.
+  await f.page({ type: 'hello' }, 'web:2')
+  await f.page({ type: 'mark', req: 7, roomId: 'room1', label: 'x' })
+  const [state, result] = f.posts.map(([, m]) => m)
+  assert.equal(state.type, 'state')
+  assert.match(state.error, /0\.18\.1/)
+  assert.equal(f.posts[0][2].view, 'web:2')
+  assert.deepEqual([result.type, result.req, result.ok], ['result', 7, false])
+  assert.match(result.error, /update the app/)
 })
 
 test('deactivate unregisters the handler', () => {
@@ -109,7 +118,8 @@ test('one metrics instance: started on activate (one poll schedule), stopped on 
   f.pushLog(id, { type: 'send', from: 'dev', to: 'lead', text: 'a', delivery: [{ to: 'lead', path: 'delivered' }] })
   host.activate(f.ctx)
   for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r))
-  assert.equal(f.schedules.length, 1)
+  // Two schedules: the metrics' poll and the panel's tick (both 5 s); one each.
+  assert.equal(f.schedules.length, 2)
   // The first poll counted the send; the throttled save is 5 s away, so only deactivate's final save writes it.
   assert.equal(f.store.get(`team:${id}`).metrics.members.dev, undefined)
   const done = host.deactivate()

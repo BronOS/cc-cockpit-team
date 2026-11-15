@@ -5,7 +5,8 @@
 // it. What it cannot know is main's exact refusal text: a refusal here rejects with an Error naming the
 // method and the rule (as the real one does), so tests match on the rule, never on a whole message.
 //
-// Covered: ctx.rooms (create/list/end/delete/open/invite/members/remove/send/docs/log with `seq` and `at`,
+// Covered: ctx.rooms (create/list/end/delete/open/invite/members/remove/send/docs/log with `seq` and `at`, log pages
+// bounded by bytes as well as count (`logPageBytes`),
 // the caps and checks types.ts documents), ctx.sessions (full SessionInfo, onChange with the whole list,
 // open/focus, the shared 5 opens a minute), ctx.cli (declared names only, one handler per name),
 // ctx.storage, ctx.notify, ctx.panels, ctx.settings, ctx.schedule. Not modelled: the delivery gate's
@@ -30,6 +31,8 @@ const DOC_PART_RE = /^[A-Za-z0-9._-]+$/
 const DOC_MAX = 256 * 1024
 const ROOM_DOCS_MAX = 20 * 1024 * 1024
 const SEND_MAX = 20000
+const PANEL_MESSAGE_MAX = 1024 * 1024
+const VIEW_ID_RE = /^web:[1-9][0-9]{0,11}$/
 const LOG_MAX = 1000
 const MINUTE = 60_000
 // Rooms' character rules, as cc-cockpit's src/shared/session-name.ts has them: CONTROL (C0, DEL, C1, bidi marks and
@@ -73,6 +76,8 @@ function fakeCtx(opts = {}) {
     roomSendsPerMinute: opts.roomSendsPerMinute ?? 60,
     heldPerMember: 100,
   }
+  // Bytes of JSON lines in one ctx.rooms.log page (main bounds a page under the 1 MiB RPC cap); small to test paging.
+  const logPageBytes = opts.logPageBytes ?? 512 * 1024
   const clock = { t: opts.now ?? 1_700_000_000_000 }
   const now = () => clock.t
   const openTimes = []
@@ -305,13 +310,28 @@ function fakeCtx(opts = {}) {
     async log(id, options = {}) {
       const r = room('rooms.log', id)
       const limit = Math.max(1, Math.min(LOG_MAX, options.limit ?? LOG_MAX))
+      // A page is bounded by its JSON lines' bytes too (main's room-log.ts `maxBytes`: at least one entry, `more` says
+      // to page on), so a caller cannot assume `limit` entries came back.
+      const fits = (list) => {
+        let bytes = 0
+        let n = 0
+        for (const e of list) {
+          const b = Buffer.byteLength(JSON.stringify(e), 'utf8') + 1
+          if (n > 0 && bytes + b > logPageBytes) break
+          bytes += b
+          n++
+        }
+        return n
+      }
       if (options.since !== undefined) {
         // The OLDEST entries after `since`; `more` when newer ones remain.
         const rest = r.log.filter((e) => e.seq > options.since)
-        return { entries: structuredClone(rest.slice(0, limit)), more: rest.length > limit }
+        const n = fits(rest.slice(0, limit))
+        return { entries: structuredClone(rest.slice(0, n)), more: rest.length > n }
       }
-      // Without `since`: the NEWEST `limit`; `more` when older ones were left out.
-      return { entries: structuredClone(r.log.slice(-limit)), more: r.log.length > limit }
+      // Without `since`: the NEWEST `limit` (newest kept first when the bytes run out); `more` when older ones were left out.
+      const n = fits(r.log.slice(-limit).reverse())
+      return { entries: structuredClone(r.log.slice(r.log.length - n)), more: r.log.length > n }
     },
   }
 
@@ -374,9 +394,19 @@ function fakeCtx(opts = {}) {
       },
     },
     panels: {
+      // As the real one (cc-cockpit src/host/ctx/ui.ts): a `view` must be 'desktop' or a browser view id
+      // (`web:<n>`, src/shared/views.ts) or it throws; a message over 1 MiB of JSON throws. A well-formed view that
+      // has no page (left, hidden) drops the message silently, which the fake does not model.
       post(panelId, message, options) {
         declaredPanel('panels.post', panelId)
-        posts.push([panelId, structuredClone(message), options])
+        const view = options && options.view
+        if (view !== undefined && view !== 'desktop' && !VIEW_ID_RE.test(view)) {
+          throw new TypeError(`panels.post: view must be the \`view\` a panels.onMessage listener got, not ${JSON.stringify(view)}`)
+        }
+        const text = JSON.stringify(message)
+        if (text === undefined) throw new TypeError('panels.post: the message is not JSON')
+        if (text.length > PANEL_MESSAGE_MAX) throw new RangeError(`panels.post: message of ${text.length} chars exceeds ${PANEL_MESSAGE_MAX}`)
+        posts.push([panelId, JSON.parse(text), options])
       },
       onMessage(panelId, fn) {
         declaredPanel('panels.onMessage', panelId)
@@ -458,6 +488,15 @@ function fakeCtx(opts = {}) {
         return
       }
       throw new Error('no such invite')
+    },
+    /**
+     * A message from the panel's page in `view` ('desktop' or `web:<n>`), as the app hands it to the host's
+     * `ctx.panels.onMessage` listener (JSON round trip, `{ view }` second). Returns the listener's promise.
+     */
+    page(message, view = 'desktop', panelId = 'team') {
+      const fn = panelListeners.get(panelId)
+      if (!fn) throw new Error(`no listener on panel ${panelId}`)
+      return fn(JSON.parse(JSON.stringify(message)), { view })
     },
     /** Pause or resume a room, as the person (or the loop guard) would. */
     setPaused(roomId, paused) {
