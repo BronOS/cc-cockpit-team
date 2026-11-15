@@ -200,14 +200,14 @@ External review: auto
 **Files:**
 - Create: `panels/team.html`, `panels/team.js`, `panels/team.css`
 
-- [ ] layout per design §7 following `ccc guide style` (component stylesheet, slots, relative URLs)
-- [ ] state always marked by an icon or a word (never by colour alone); member text rendered as text, never HTML
-- [ ] forms: New team and Hire (fields as `hire`, kickoff path), Reply; confirm End and Delete in-page (no `confirm()`)
-- [ ] follow the port protocol in `lib/panel.js`: `ping` (with `selected`) every 30 s while shown, else the view is
+- [x] layout per design §7 following `ccc guide style` (component stylesheet, slots, relative URLs)
+- [x] state always marked by an icon or a word (never by colour alone); member text rendered as text, never HTML
+- [x] forms: New team and Hire (fields as `hire`, kickoff path), Reply; confirm End and Delete in-page (no `confirm()`)
+- [x] follow the port protocol in `lib/panel.js`: `ping` (with `selected`) every 30 s while shown, else the view is
       forgotten; on a `logSeq` move re-ask the activity and docs list only, never a doc's text (a read logs a `doc-read`)
-- [ ] keep pure helpers (formatting, filtering) in `panels/view-model.js` and test them in `test/panel-page.test.js`
-- [ ] a grep test: no `innerHTML`, `outerHTML`, `insertAdjacentHTML` or `document.write` in `panels/`
-- [ ] run tests - must pass before next task
+- [x] keep pure helpers (formatting, filtering) in `panels/view-model.js` and test them in `test/panel-page.test.js`
+- [x] a grep test: no `innerHTML`, `outerHTML`, `insertAdjacentHTML` or `document.write` in `panels/`
+- [x] run tests - must pass before next task
 
 ### Task 10: Reference skill [model: sonnet]
 

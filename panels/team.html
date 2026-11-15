@@ -1,5 +1,16 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Team</title></head>
-<body><p>Team</p></body>
+  <head>
+    <meta charset="utf-8" />
+    <title>Team</title>
+    <!-- CSP: scripts only from this plugin's own files, so the code is in view-model.js (pure helpers) and team.js. -->
+    <script src="../__sdk/panel.js"></script>
+    <link rel="stylesheet" href="team.css" />
+    <script src="view-model.js"></script>
+    <script src="team.js" defer></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="menu-host"></div>
+  </body>
 </html>

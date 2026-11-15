@@ -1,0 +1,39 @@
+/* The Team panel. Buttons, inputs, rows, cards, chips and badges are the SDK's component sheet (ccc guide style);
+   this file only lays the sections out, with the theme tokens. */
+html, body { height: 100%; }
+body { margin: 0; background: var(--cc-bg); color: var(--cc-fg); font: var(--cc-text-m) var(--cc-font-ui); overflow-y: auto; }
+#root { display: flex; flex-direction: column; gap: var(--cc-space-3); padding: var(--cc-space-2); }
+section { display: flex; flex-direction: column; gap: var(--cc-space-1); min-width: 0; }
+h2, h3 { margin: 0; font-size: var(--cc-text-m); font-weight: 600; }
+h2 { font-size: var(--cc-text-l); overflow-wrap: anywhere; }
+.head { display: flex; align-items: center; gap: var(--cc-space-2); justify-content: space-between; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--cc-space-1); }
+.icon { display: inline-block; width: 1.4em; text-align: center; flex: none; }
+.word { white-space: nowrap; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mono { font-family: var(--cc-font-mono); }
+.grow { flex: 1; min-width: 0; }
+.row-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--cc-space-1) var(--cc-space-2); }
+.cc-row { height: auto; min-height: var(--cc-row-h); align-items: flex-start; padding-block: var(--cc-space-1); }
+.cc-row-title, .cc-row-meta { white-space: normal; overflow-wrap: anywhere; }
+.cc-row-actions { opacity: 1; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--cc-space-1) var(--cc-space-3); margin: 0; }
+.stats dt { color: var(--cc-fg-muted); font-size: var(--cc-text-s); }
+.stats dd { margin: 0; }
+.form { display: flex; flex-direction: column; gap: var(--cc-space-2); }
+.form .cc-field { margin: 0; }
+.form .buttons { display: flex; gap: var(--cc-space-1); }
+.question { display: flex; flex-direction: column; gap: var(--cc-space-1); }
+.question textarea { width: 100%; min-height: 4.5em; box-sizing: border-box; resize: vertical; }
+.confirm { border-left: 3px solid var(--cc-status-needs-permission); }
+.doc-text { max-height: 18em; overflow: auto; margin: 0; padding: var(--cc-space-2); background: var(--cc-surface-1); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-m); font: var(--cc-text-s) var(--cc-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.entry { display: flex; gap: var(--cc-space-2); padding: 2px 0; }
+.entry time { color: var(--cc-fg-subtle); flex: none; font-size: var(--cc-text-s); }
+.entry .kind { flex: none; color: var(--cc-fg-muted); font-size: var(--cc-text-s); min-width: 4.5em; }
+.notice { padding: var(--cc-space-1) var(--cc-space-2); border-radius: var(--cc-radius-m); background: var(--cc-surface-1); border: 1px solid var(--cc-border); overflow-wrap: anywhere; }
+.scroll-x { overflow-x: auto; }
+.spans { border-collapse: collapse; width: 100%; font-size: var(--cc-text-s); }
+.spans th, .spans td { text-align: left; padding: 2px var(--cc-space-2) 2px 0; white-space: nowrap; }
+.spans th { color: var(--cc-fg-muted); font-weight: 500; }
+.cc-menu button { display: flex; gap: var(--cc-space-1); width: 100%; text-align: left; }
+:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
