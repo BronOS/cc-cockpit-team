@@ -38,7 +38,7 @@ log stay in Rooms, where main enforces every rule. The old experimental plugin o
 
 | Command | Who | What |
 |---|---|---|
-| `start "<title>"` | any Claude tab | creates the room, prints a coordinator invite and the `ccc room join <code>` line to run |
+| `start "<title>" [--as <name>]` | a Claude tab in no room | creates the room, prints a coordinator invite for `<name>` (default `lead`) and the `ccc room join <code>` line to run; refused for a tab already in a room |
 | `hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--coordinator]` | coordinator | stores the file as `members/<name>/kickoff.md`, opens the tab in the room with one fixed prompt: read your kickoff with `ccc room doc get members/<name>/kickoff.md` |
 | `invite <name> [--coordinator]` | coordinator | a one-time code for an existing tab to `ccc room join` |
 | `fire <name>` | coordinator | removes the member; its tab stays |
@@ -51,13 +51,16 @@ log stay in Rooms, where main enforces every rule. The old experimental plugin o
 - The caller is known from `CliCall.tabId` (set by main, never by the caller); "coordinator" is read from
   `ctx.rooms.members`, never from arguments. A tab not in one of this plugin's rooms gets the same answer for every
   team command but `start` and `help`. Unknown and foreign ids answer alike.
-- The kickoff file is read by the host (Node) from a path the caller gives, resolved against the caller's cwd; refused
+- The kickoff file is read by the host (Node) from a path resolved against the caller's cwd (CLI) or the project folder
+  (panel); `--cwd` goes to `ctx.rooms.open`, which applies its own checks. A name already in the team is refused before
+  anything is written; a failed open removes the seeded kickoff doc. The kickoff is refused
   before any tab opens when missing, over 256 KiB, not UTF-8 text or with characters Rooms refuses. The tool does not
   read its meaning.
 - From the panel: **New team** (title, optional lead kickoff file, model, effort, cwd) opens a fresh lead tab as
   coordinator through `ctx.rooms.open` (no invite step); **Hire…** is the same form as `hire`.
 - Caps are Rooms' and the person's limits: rooms per project, members per room, hires a minute (`opensPerMinute`). A
-  refusal names the limit and where to change it (Settings > General > Plugin limits, or the plugin's Limits).
+  Rooms refusal is passed through in Rooms' own words (it names the limit; once the app carries §6, also where to
+  change it).
 
 ## 3. Questions to the person
 
@@ -112,7 +115,8 @@ One panel, "Team", per window; state always marked with an icon or a word, never
   invite.
 - **Waiting on you**: §3's questions with Reply and Done.
 - **Activity**: the room log newest first, marks included, filterable by member and by kind.
-- **Docs**: the list; a click opens core's room view (read-only docs).
+- **Docs**: the list; a click shows the doc read-only in the panel (`ctx.rooms.docs.get`; there is no API to open
+  core's room view, which the person reaches from the tab strip).
 - Actions: New team, Hire…, Mark, End and export, Delete (ended teams).
 Core's room view (messages, docs, remove, pause and resume) is not duplicated.
 
@@ -122,6 +126,8 @@ Core's room view (messages, docs, remove, pause and resume) is not duplicated.
   room view). Metrics resume; the paused gap is not working time.
 - A member's text (questions, log entries, doc names) is untrusted: the panel renders it as text, never HTML; `ask`
   text is capped by Rooms' message rules before it is stored.
+- `hire --kickoff` reads, and `end --export` writes, any path the calling tab names. That is not a boundary and is
+  documented as such: a coordinator is a Claude tab of the same OS user, which can read and write those files anyway.
 - The tool never reads or acts on a kickoff's meaning, never runs commands for members, and never widens what Rooms
   allows: identities, docs access and caps are main's.
 
