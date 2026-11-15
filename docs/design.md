@@ -68,7 +68,13 @@ A member cannot send to `person` in Rooms (reserved name). `ccc team ask` is the
 `{ id, from, text, askedAt }` on the team, shows it in the panel's **Waiting on you** and raises a notice
 (`ctx.notify`). The person answers in the panel: **Reply** sends the text to that member as a room message from the
 plugin, prefixed `Answer to your question <id>:`; **Done** closes it without a reply. Text limits are Rooms' message
-limits. The answer time is recorded (§4).
+limits (a reply's prefix counts). The answer time is recorded (§4).
+
+The record is one storage value (1 MiB), so a team holds at most 50 open questions of 100,000 characters in all (an
+answer or a Done frees a place); closed questions never cause a refusal, they are compacted on a later ask (the oldest
+first cut to a one-line glance, marked `trimmed`, then dropped past 300 questions). A reply goes to the tab that asked:
+a member of the same name hired after a fire answers "left the team". That tab is known in memory only (restored tabs
+get new ids), so after a restart the reply goes by name. Done is refused while a reply is being sent.
 
 ## 4. Metrics (raw facts only)
 
