@@ -1,0 +1,137 @@
+# Team: a cc-cockpit plugin for running a team of Claude tabs (design)
+
+Status: revision 1 (2026-11-15), from a brainstorm with Oleg. Successor of the experimental `bronos.team` in
+`~/Projects/team-experiment` (run 001), rebuilt on cc-cockpit core Rooms (`docs/design-rooms.md` in cc-cockpit).
+
+## 0. Purpose and the one rule
+
+The plugin is a **tool**: it lets a person, or a lead Claude, start a team (one Rooms room), hire members as Claude tabs,
+hear their questions, watch them, measure them and export the result. It is **not a flow**: no lead or member skills, no
+roles, no personas, no phases (shape, plan, build), no review loops, no Jev, no codex. Every developer and company has its
+own flow; the plugin must not ship one or pretend to cover one. A flow lives in the user's own skills and files and
+drives the tool through `ccc team` and `ccc room`.
+
+The test for every feature: **does every flow need it, whatever the flow?** Yes: tool, it goes here. It encodes how one
+person works: flow, it stays out. A reviewer is a member whose kickoff says "run codex"; a persona is text in a kickoff
+file; a phase is a mark. The tool never looks inside a kickoff.
+
+Decisions taken in the brainstorm:
+- Generic, public marketplace plugin; Oleg's flow (`LEAD.md`, `PROTOCOL.md`, the agency-agents catalog) becomes his
+  own skills on top of it.
+- Everything in v1: lifecycle, panel, metrics, export.
+- Worktrees are flow: `--cwd` only; the flow makes its worktrees with git.
+- The room caps become the person's setting (core change, §6), for as much flexibility as possible.
+
+## 1. Shape
+
+Repo `~/Projects/cc-cockpit-team` (GitHub `BronOS/cc-cockpit-team`), id `bronos.team`, MIT. A plugin host
+(`dist/host.js`, plain JavaScript like the reviewer and files plugins), one panel (`panels/team.html`), one CLI command
+(`ccc team`), one reference skill (`team-tool`: what `ccc team` does, never how to run a team). Public API only:
+`ctx.rooms`, `ctx.sessions`, `ctx.cli`, `ctx.panels`, `ctx.storage`, `ctx.notify`, settings. Needs the app release that
+carries §6.
+
+A **team is one room** of this plugin in this window. The plugin's own record per team (in `ctx.storage`, per project):
+`{ roomId, title, createdAt, endedAt?, exportDir?, marks[], questions[], metrics }`. Messages, docs, membership and the
+log stay in Rooms, where main enforces every rule. The old experimental plugin of the same id is unlinked first.
+
+## 2. Lifecycle (`ccc team`)
+
+| Command | Who | What |
+|---|---|---|
+| `start "<title>"` | any Claude tab | creates the room, prints a coordinator invite and the `ccc room join <code>` line to run |
+| `hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--coordinator]` | coordinator | stores the file as `members/<name>/kickoff.md`, opens the tab in the room with one fixed prompt: read your kickoff with `ccc room doc get members/<name>/kickoff.md` |
+| `invite <name> [--coordinator]` | coordinator | a one-time code for an existing tab to `ccc room join` |
+| `fire <name>` | coordinator | removes the member; its tab stays |
+| `ask "<question>"` / `-` | any member | a question to the person (§3); prints its id |
+| `mark "<label>"` | coordinator | a timestamp on the team's timeline (§4) |
+| `list [--json]`, `stats [--json]` | any member | the team, its members, the metrics |
+| `end [--export <dir>]` | coordinator | exports (§5), then ends the room |
+| `help` | anyone | usage |
+
+- The caller is known from `CliCall.tabId` (set by main, never by the caller); "coordinator" is read from
+  `ctx.rooms.members`, never from arguments. A tab not in one of this plugin's rooms gets the same answer for every
+  team command but `start` and `help`. Unknown and foreign ids answer alike.
+- The kickoff file is read by the host (Node) from a path the caller gives, resolved against the caller's cwd; refused
+  before any tab opens when missing, over 256 KiB, not UTF-8 text or with characters Rooms refuses. The tool does not
+  read its meaning.
+- From the panel: **New team** (title, optional lead kickoff file, model, effort, cwd) opens a fresh lead tab as
+  coordinator through `ctx.rooms.open` (no invite step); **Hire…** is the same form as `hire`.
+- Caps are Rooms' and the person's limits: rooms per project, members per room, hires a minute (`opensPerMinute`). A
+  refusal names the limit and where to change it (Settings > General > Plugin limits, or the plugin's Limits).
+
+## 3. Questions to the person
+
+A member cannot send to `person` in Rooms (reserved name). `ccc team ask` is the tool's way: the plugin records
+`{ id, from, text, askedAt }` on the team, shows it in the panel's **Waiting on you** and raises a notice
+(`ctx.notify`). The person answers in the panel: **Reply** sends the text to that member as a room message from the
+plugin, prefixed `Answer to your question <id>:`; **Done** closes it without a reply. Text limits are Rooms' message
+limits. The answer time is recorded (§4).
+
+## 4. Metrics (raw facts only)
+
+Per member: hired / left (with why: fired, tab closed, team ended, left), model and effort, cost USD and context % (from
+`ctx.sessions`, the status line's `costUsd` / `contextPercent`), time working / waiting for input / idle (from status
+changes, `ctx.sessions.onChange`), messages sent and received, doc reads and writes (from the room log via
+`ctx.rooms.log` with a `seq` cursor), questions asked and the person's answer time.
+
+Per team: start, end, total cost, sum of member working time, the person's active time (question to reply, plus panel
+actions; a proxy, said so in the panel and export). **Marks** (`mark`, or the panel's Mark button) split cost and time
+into spans; what a mark means is the flow's.
+
+Kept in the team record, updated on status changes and log polls; shown live in the panel and by `stats`. Cost covers
+the members' tabs only (a member's subagents are in its tab's cost; work outside the team's tabs is not counted). Time
+between an app quit and the person's resume is not counted as working.
+
+## 5. End and export
+
+`end [--export <dir>]` (coordinator) or the panel's **End and export**. The export goes into a **new** folder
+`<dir>/<team-slug>-<yyyymmdd-hhmm>/`, made with an exclusive create, never into an existing one:
+`docs/` (the room's docs as stored, `shared/` and `members/<name>/`), `log.jsonl` (the room log, paged through to the
+end), `metrics.json`, `metrics.md` (a table, split at marks), `questions.md`. Without `--export` the plugin setting
+"Export folder" is used (empty by default: no export). Paths come from Rooms (already restricted to `[A-Za-z0-9._-]`,
+depth 4) and are checked again before writing; files are written with no-follow, never through a symlink.
+
+An ended team stays in the panel, read-only, until **Delete** (`ctx.rooms.delete`; Rooms keeps 50 ended rooms).
+
+## 6. Core change (cc-cockpit, next app release)
+
+- Two more plugin limits beside `opensPerMinute` and the send caps (`src/shared/plugin-limits.ts`, global value plus
+  per-plugin override, hard ceiling): `roomsPerProject` (default 5, ceiling 20) and `membersPerRoom` (default 20,
+  ceiling 50), read by the room registry on every create, open and join instead of the constants. The storage caps
+  (waiting messages, doc and room sizes, ended rooms kept, invites) stay fixed: they protect the app.
+- Doc drift: `ctx.rooms.send`'s SDK comment and the guide name "Settings > Plugins > Limits" only; add the global
+  values (Settings > General > Plugin limits).
+- Guide and features docs for both; the example plugin's types copy.
+
+## 7. Panel
+
+One panel, "Team", per window; state always marked with an icon or a word, never by colour alone.
+- **Teams**: title, member count, a waiting-on-you count, "ended" / "paused" as text.
+- **Members** of the selected team: name (★ coordinator), status (icon + word: working, waiting, idle, closed), the
+  current tool, model / effort, cost and context %, messages waiting. A click focuses the tab; the row menu: Fire, Copy
+  invite.
+- **Waiting on you**: §3's questions with Reply and Done.
+- **Activity**: the room log newest first, marks included, filterable by member and by kind.
+- **Docs**: the list; a click opens core's room view (read-only docs).
+- Actions: New team, Hire…, Mark, End and export, Delete (ended teams).
+Core's room view (messages, docs, remove, pause and resume) is not duplicated.
+
+## 8. Restart, failures, security
+
+- Team records survive restarts; Rooms restores members paused, the panel says so and resuming is the person's (core's
+  room view). Metrics resume; the paused gap is not working time.
+- A member's text (questions, log entries, doc names) is untrusted: the panel renders it as text, never HTML; `ask`
+  text is capped by Rooms' message rules before it is stored.
+- The tool never reads or acts on a kickoff's meaning, never runs commands for members, and never widens what Rooms
+  allows: identities, docs access and caps are main's.
+
+## 9. Testing and rollout
+
+- `node:test` suites against a fake `ctx` (rooms, sessions, cli, storage): every command's coordinator check, kickoff
+  validation, ask and reply, marks and span math, export into a new folder (refusing an existing one, a symlink),
+  restart of records and metrics.
+- An e2e in cc-cockpit with the plugin linked: start, hire two members, ask, reply, mark, end with export; the folder
+  checked.
+- Order: (1) the core change (§6) on its own branch and app release; (2) this plugin, released and listed in the
+  marketplace with "Needs cc-cockpit <that version>"; (3) Oleg's flow in `~/Projects/team-experiment` moves to his own
+  skills on `ccc team`, and the old experimental plugin is retired.
