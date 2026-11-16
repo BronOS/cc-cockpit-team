@@ -66,15 +66,17 @@ log stay in Rooms, where main enforces every rule. The old experimental plugin o
   there (never inside a surrogate pair) and the prompt ends with a line saying the rest is in the doc and must be read
   before starting. Control characters the app would strip are stripped first (CRLF becomes LF), so the length checked
   is the length sent. No permission rule is added for members.
-- Split panes (app setting `splitPanes`, default on): a hire opens the member with `ctx.rooms.open`'s `beside` /
-  `side`, as one 2x2 group with the coordinator: the 1st other member right of the coordinator's tab, the 2nd below it,
-  the 3rd below the 1st. The coordinator's tab is the CLI caller's (`CliCall.tabId`), or for the panel the first
-  coordinator member with a tab. The plugin cannot read groups, so the anchor is picked from the member list read under
-  the name's lock (a read, inside the guarded change: THE RULE holds) in join order; a 4th other member on, no
-  coordinator tab, or the setting off opens plain. `placed: false` (group full, anchor gone, pane too small) is a plain
+- Split panes (app setting `layout`: "column" default, "grid", "tabs"; an old stored `splitPanes: false` reads as
+  "tabs"): a hire opens the member with `ctx.rooms.open`'s `beside` / `side`. Column: the coordinator on the left, the
+  1st other member right of its tab, each next one below the previous member (hire order top to bottom; each new pane
+  halves its anchor, so heights are uneven, 1/2, 1/4, 1/4, and the person drags the dividers). Grid: the 1st right, the
+  2nd below the coordinator, the 3rd below the 1st. The coordinator's tab is the CLI caller's (`CliCall.tabId`), or for
+  the panel the first coordinator member with a tab. The plugin cannot read groups, so the anchor is picked from the
+  member list read under the name's lock (a read, inside the guarded change: THE RULE holds) in join order; a 4th other
+  member on, no  coordinator tab, or layout "tabs" opens plain. `placed: false` (group full, anchor gone, pane too small) is a plain
   tab and fine, no retry. "beside: no such tab in this window" (the anchor's tab closed after the read) is refused by
   main before the open counts against `opensPerMinute`, so the hire retries once without `beside`. An older app ignores
-  both and answers without `placed`: no version gate.
+  both and answers without `placed`: no version gate. `ccc team hire` prints the outcome (split pane beside the coordinator, or a plain tab and why; nothing when `placed` is absent) and that the kickoff is in the first prompt and in the doc.
 - From the panel: **New team** (title, optional lead kickoff file, model, effort, cwd) opens a fresh lead tab as
   coordinator through `ctx.rooms.open` (no invite step); **Hire…** is the same form as `hire`.
 - Caps are Rooms' and the person's limits: rooms per project, members per room, hires a minute (`opensPerMinute`). A

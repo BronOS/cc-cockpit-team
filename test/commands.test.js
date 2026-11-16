@@ -883,14 +883,42 @@ async function hireAll(p, names) {
   }
 }
 
-test('hire: members 1-3 open as a 2x2 beside the coordinator; the 4th opens plain', async () => {
+test('hire: column (default): members stack below one another on the right; the 4th opens plain', async () => {
   const p = await started()
+  await hireAll(p, ['a', 'b', 'c', 'd'])
+  const tabOf = (n) => p.f.rooms.get(p.roomId).members.get(n).tabId
+  assert.deepEqual(placeOf(p.f, 'a'), { beside: 'lead-tab', side: 'right' })
+  assert.deepEqual(placeOf(p.f, 'b'), { beside: tabOf('a'), side: 'down' })
+  assert.deepEqual(placeOf(p.f, 'c'), { beside: tabOf('b'), side: 'down' })
+  assert.deepEqual(placeOf(p.f, 'd'), { beside: undefined, side: undefined })
+})
+
+test('hire: layout grid is the 2x2', async () => {
+  const p = await started({ app: { layout: 'grid' } })
   await hireAll(p, ['a', 'b', 'c', 'd'])
   const tabOf = (n) => p.f.rooms.get(p.roomId).members.get(n).tabId
   assert.deepEqual(placeOf(p.f, 'a'), { beside: 'lead-tab', side: 'right' })
   assert.deepEqual(placeOf(p.f, 'b'), { beside: 'lead-tab', side: 'down' })
   assert.deepEqual(placeOf(p.f, 'c'), { beside: tabOf('a'), side: 'down' })
   assert.deepEqual(placeOf(p.f, 'd'), { beside: undefined, side: undefined })
+})
+
+test('hire: layout tabs opens every member plain', async () => {
+  const p = await started({ app: { layout: 'tabs' } })
+  await hireAll(p, ['a'])
+  assert.deepEqual(placeOf(p.f, 'a'), { beside: undefined, side: undefined })
+})
+
+test('hire output says where the tab opened', async () => {
+  const p = await started()
+  const r = await p.f.run(['hire', 'a', '--kickoff', 'kick/dev.md'], p.lead)
+  assert.match(r.stdout, /^hired a: its tab opened as a split pane beside lead \(kickoff in its first prompt; also in members\/a\/kickoff\.md\)/)
+  const q = await started({ app: { layout: 'tabs' } })
+  const r2 = await q.f.run(['hire', 'a', '--kickoff', 'kick/dev.md'], q.lead)
+  assert.match(r2.stdout, /plain tab \(split panes off\)/)
+  const o = await started({ noBeside: true })
+  const r3 = await o.f.run(['hire', 'a', '--kickoff', 'kick/dev.md'], o.lead)
+  assert.doesNotMatch(r3.stdout, /split pane|plain tab/)
 })
 
 test('hire: placed false (pane too small) is a plain tab, no retry, the hire stands', async () => {
@@ -902,7 +930,7 @@ test('hire: placed false (pane too small) is a plain tab, no retry, the hire sta
   assert.equal(p.f.groups.has('lead-tab'), false)
 })
 
-test('hire: the 2x2 lands in one group of 4 in the fake, as in the app', async () => {
+test('hire: the column lands in one group of 4 in the fake, as in the app', async () => {
   const p = await started()
   await hireAll(p, ['a', 'b', 'c'])
   assert.equal(p.f.groups.get('lead-tab').length, 4)
@@ -927,7 +955,7 @@ test('hire: other open refusals are not retried', async () => {
   assert.match(r.stderr, /tabs a minute/)
 })
 
-test('hire: the splitPanes setting off opens every member plain', async () => {
+test('hire: the old splitPanes false setting reads as tabs', async () => {
   const p = await started({ app: { splitPanes: false } })
   await hireAll(p, ['a', 'b'])
   assert.deepEqual(placeOf(p.f, 'a'), { beside: undefined, side: undefined })

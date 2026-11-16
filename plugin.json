@@ -37,11 +37,16 @@
             "description": "Where `ccc team end` writes the export of a team (a new folder per team). Empty: no export unless --export names a folder.",
             "default": ""
           },
-          "splitPanes": {
-            "type": "boolean",
-            "title": "Open members as split panes beside the coordinator",
-            "description": "A hire opens the member's tab beside the coordinator's, as one 2x2 group: the 1st member right of the coordinator, the 2nd below it, the 3rd below the 1st. Later members, or when the app cannot place one, open as plain tabs.",
-            "default": true
+          "layout": {
+            "type": "string",
+            "title": "Layout of hired members",
+            "description": "Where a hire's tab opens. Later members, or when the app cannot place one, open as plain tabs.",
+            "oneOf": [
+              { "const": "column", "title": "Coordinator left, members stacked on the right" },
+              { "const": "grid", "title": "Grid: right, below, below the first" },
+              { "const": "tabs", "title": "Plain tabs (no split panes)" }
+            ],
+            "default": "column"
           }
         }
       }
