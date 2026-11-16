@@ -1,20 +1,23 @@
 'use strict'
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
 const { fakeCtx } = require('./fake-ctx')
 const { createTeams, TeamError, NOT_IN_TEAM } = require('../lib/teams.js')
-const { createCommands } = require('../lib/commands.js')
+const { createCommands, createHiring } = require('../lib/commands.js')
 const { statsOf } = require('../lib/stats.js')
 const { createQuestions, TEXT_MAX, OPEN_MAX, OPEN_TEXT_MAX, KEPT_MAX, STORED_TEXT_MAX, replyPrefix } = require('../lib/questions.js')
 
 /** A team with a coordinator `lead` and a member `dev`, driven directly (the panel's path) and through `ccc team`. */
-async function setup(opts) {
+async function setup(opts, title = 'Build it') {
   const f = fakeCtx(opts)
   // One teams store shared by the `ccc team` handler and the direct calls (the panel's path): records live in memory.
   const teams = createTeams(f.ctx)
   const questions = createQuestions(f.ctx, teams)
   f.ctx.cli.register('team', createCommands(f.ctx, teams, questions))
-  const { id } = await f.ctx.rooms.create({ title: 'Build it' })
+  const { id } = await f.ctx.rooms.create({ title })
   await teams.add((await f.ctx.rooms.list()).find((r) => r.id === id))
   const lead = (await f.ctx.rooms.open(id, { name: 'lead', coordinator: true })).tabId
   const dev = (await f.ctx.rooms.open(id, { name: 'dev' })).tabId
@@ -88,6 +91,30 @@ test('ask refuses empty, too long and bad-character text, and a wrong number of 
   assert.equal(f.notices.length, 0)
   // 20000 characters is the limit and fits.
   assert.equal((await ask(f, dev, 'y'.repeat(20000))).code, undefined)
+})
+
+test("ask and reply count characters as Rooms does (code points): an emoji is one", async () => {
+  const { f, questions, id, dev } = await setup()
+  const emoji = '\u{1F600}'
+  // 10,001 emoji are 20,002 UTF-16 units but 10,001 characters: under Rooms' 20,000.
+  assert.equal((await ask(f, dev, emoji.repeat(10001))).code, undefined)
+  const over = await ask(f, dev, emoji.repeat(20001))
+  assert.equal(over.code, 1)
+  assert.match(over.stderr, /at most 20000 characters/)
+  const room = TEXT_MAX - replyPrefix('q1').length
+  await assert.rejects(questions.reply(id, 'q1', emoji.repeat(room + 1)), (e) => e.code === 'too-long' && e.message.includes(`this one has ${room + 1}`))
+  await questions.reply(id, 'q1', emoji.repeat(room))
+  assert.equal([...f.rooms.get(id).log.filter((e) => e.type === 'send')[0].text].length, TEXT_MAX)
+})
+
+test('done on an ended team is refused and changes nothing (read-only)', async () => {
+  const { f, teams, questions, id, dev } = await setup()
+  await ask(f, dev, 'a?')
+  // Ended in Rooms (the room view) while the record still says live: refreshed first, as reply does.
+  await f.ctx.rooms.end(id)
+  await assert.rejects(questions.done(id, 'q1'), (e) => e.code === 'ended')
+  assert.equal((await teams.get(id)).questions[0].doneAt, undefined)
+  assert.equal(f.store.get(`team:${id}`).questions[0].doneAt, undefined)
 })
 
 test('ask caps the open text per team; answering or closing frees it', async () => {
@@ -284,6 +311,32 @@ test('reply: unknown team, unknown question, empty text and an ended team', asyn
   await assert.rejects(questions.reply(id, 'q1', 'x'), (e) => e.code === 'ended')
 })
 
+test('reply: a room ended (room view) while the members read was on its way is refused inside, nothing sent', async () => {
+  const { f, teams, questions, id, dev } = await setup()
+  await ask(f, dev, 'q?')
+  const real = f.ctx.rooms.members
+  let release
+  const gate = new Promise((r) => (release = r))
+  let reached
+  const came = new Promise((r) => (reached = r))
+  // The members answer is read while the room is live and arrives after it ended.
+  f.ctx.rooms.members = async (...a) => {
+    f.ctx.rooms.members = real
+    const answer = await real(...a)
+    reached()
+    await gate
+    return answer
+  }
+  const replied = questions.reply(id, 'q1', 'Postgres')
+  await came
+  await f.ctx.rooms.end(id)
+  const logAt = f.rooms.get(id).log.length
+  release()
+  await assert.rejects(replied, (e) => e.code === 'ended' && /nobody is left to answer/.test(e.message))
+  assert.equal(f.rooms.get(id).log.length, logAt, 'nothing sent')
+  assert.equal((await teams.get(id)).questions[0].answeredAt, undefined)
+})
+
 test('reply: rooms.members failing passes through, leaves the question open and the lock free', async () => {
   const { f, questions, id, dev } = await setup()
   await ask(f, dev, 'q?')
@@ -304,6 +357,51 @@ test('reply to a name now held by another member (fired, then hired again) answe
   await f.ctx.rooms.open(id, { name: 'dev' })
   await assert.rejects(questions.reply(id, 'q1', 'x'), (e) => e.code === 'gone')
   assert.equal(f.rooms.get(id).log.filter((e) => e.type === 'send').length, 0)
+})
+
+test('reply: a fire and rehire of the asker\'s name while the reply reads the members cannot slip in (the name lock)', async () => {
+  const { f, questions, id, dev, lead } = await setup()
+  await ask(f, dev, 'q?')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'team-q-'))
+  fs.writeFileSync(path.join(dir, 'k.md'), '# You are dev\n')
+  const members = f.ctx.rooms.members
+  let during
+  f.ctx.rooms.members = async (roomId) => {
+    const out = await members(roomId)
+    // Between the reply's membership check and its send: a coordinator fires dev and hires a new dev.
+    f.ctx.rooms.members = members
+    during = [await f.run(['fire', 'dev'], { tabId: lead }), await f.run(['hire', 'dev', '--kickoff', path.join(dir, 'k.md')], { tabId: lead })]
+    return out
+  }
+  await questions.reply(id, 'q1', 'x')
+  // The fire waited for nothing: it is refused while the answer is on its way, so the answer reached the asker.
+  assert.equal(during[0].code, 1)
+  assert.match(during[0].stderr, /an answer to dev is being sent/)
+  assert.equal(during[1].code, 1)
+  const sends = f.rooms.get(id).log.filter((e) => e.type === 'send')
+  assert.equal(sends.length, 1)
+  assert.equal((await f.ctx.rooms.members(id)).find((m) => m.name === 'dev').tabId, dev)
+  // Released after the reply: the fire goes through now.
+  assert.equal((await f.run(['fire', 'dev'], { tabId: lead })).code, undefined)
+})
+
+test('reply: a hire of the asker\'s name in flight refuses the reply until it is done', async () => {
+  const { f, questions, id, dev, lead } = await setup()
+  await ask(f, dev, 'q?')
+  await f.ctx.rooms.remove(id, 'dev')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'team-q-'))
+  fs.writeFileSync(path.join(dir, 'k.md'), '# You are dev\n')
+  const open = f.ctx.rooms.open
+  let reply
+  f.ctx.rooms.open = async (roomId, o) => {
+    reply = await questions.reply(id, 'q1', 'x').then(() => null, (e) => e)
+    return open(roomId, o)
+  }
+  assert.equal((await f.run(['hire', 'dev', '--kickoff', path.join(dir, 'k.md')], { tabId: lead })).code, undefined)
+  f.ctx.rooms.open = open
+  assert.equal(reply.code, 'hire-pending')
+  assert.match(reply.message, /dev is being hired/)
+  assert.equal((await questions.open(id)).length, 1)
 })
 
 test('reply length: the prefix counts, the plugin says how much fits', async () => {
@@ -367,6 +465,13 @@ test('a failed save after a reply was sent keeps the answer (logged, never sent 
 test('createCommands refuses to run without the shared questions instance', () => {
   const f = fakeCtx()
   assert.throws(() => createCommands(f.ctx, createTeams(f.ctx)), /questions instance/)
+  // A hiring instance with its own name locks would let a fire and rehire slip between a reply's check and send.
+  const t = createTeams(f.ctx)
+  assert.throws(() => createCommands(f.ctx, t, createQuestions(f.ctx, t), undefined, undefined, createHiring(f.ctx)), /share their name locks/)
+  // Nor one with a guard of its own: a hire or a fire would slip into a team's export and end.
+  const q = createQuestions(f.ctx, t)
+  assert.throws(() => createCommands(f.ctx, t, q, undefined, undefined, createHiring(f.ctx, undefined, q.names)), /export guard/)
+  assert.doesNotThrow(() => createCommands(f.ctx, t, q, undefined, undefined, createHiring(f.ctx, undefined, q.names, t.guard)))
 })
 
 test('reply to a member that left says so and keeps the question open', async () => {
@@ -437,4 +542,27 @@ test('ids are not reused and an ended team keeps its questions', async () => {
   await questions.done(id, 'q2')
   await ask(f, dev, 'c?')
   assert.deepEqual((await teams.get(id)).questions.map((q) => q.id), ['q1', 'q2', 'q3'])
+})
+
+test('the notice title fits the host\'s 80 UTF-16 units: a title of 40 emoji still notifies, no pair is split', async () => {
+  // Rooms' title rule counts code points (60); 40 emoji are 80 units, 86 with the prefix: over the host's limit.
+  const { f, dev } = await setup(undefined, '\u{1F600}'.repeat(40))
+  const r = await ask(f, dev, 'Which database?')
+  assert.equal(r.code, undefined, r.stderr)
+  assert.equal(f.notices.length, 1)
+  const title = f.notices[0].options.title
+  assert.ok(title.length <= 80, `${title.length} units`)
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(title), 'a surrogate pair was split')
+  assert.match(title, /^Team: /)
+  assert.match(title, /…$/)
+})
+
+test('cutUnits: whole text kept, else at most max units with an ellipsis, never half a surrogate pair', () => {
+  const { cutUnits } = require('../lib/text.js')
+  const e = '\u{1F600}'
+  assert.equal(cutUnits('abc', 3), 'abc')
+  assert.equal(cutUnits('abcd', 3), 'ab…')
+  assert.equal(cutUnits(e.repeat(3), 6), e.repeat(3))
+  assert.equal(cutUnits(e.repeat(3), 5), e + e + '…') // 5 units
+  assert.equal(cutUnits(e.repeat(3), 4), e + '…') // the cut at 3 units would split the second pair
 })

@@ -61,10 +61,12 @@ no working time. Your active time is a proxy (question to reply, plus a fixed wi
 
 `ccc team end --export <dir>`, or the "Export folder" setting (`~/` and a project-relative folder are accepted), writes
 a new folder `<dir>/<team-slug>-<yyyymmdd-hhmm>/` before the room ends: `docs/`, `log.jsonl`, `metrics.json`,
-`metrics.md`, `questions.md`. The log and the metrics are read to the moment of the export; the room's closing `end`
-entry (and the members leaving with it) comes after, so it is in neither. An existing folder is refused, files are never written through a symlink, files are 0600
-and folders 0700, and a failed export leaves the team running. From `ccc` the export has 20 s (a `ccc` call is cut at
-30 s); a team too big for that is ended from the panel.
+`metrics.md`, `questions.md`. The log and the metrics cover the same entries, up to the one the stats were taken at
+(`logSeq` in `metrics.json`); what the room logs after that (a message sent while the export runs, the closing `end`
+entry and the members leaving with it) is in neither. While a team is exported and ended, the plugin's own changes to it
+(reply, Done, ask, mark, hire, fire, invite) are refused with "try again in a moment". An existing folder is refused, files are never written through a symlink, files are 0600
+and folders 0700, and a failed export leaves the team running. From `ccc` the export has 20 s from the call's start (a `ccc` call is cut at
+30 s), and a cancelled call (Ctrl+C, the cut) never ends the team; a team too big for that is ended from the panel.
 
 ## Limits
 
@@ -73,8 +75,12 @@ and folders 0700, and a failed export leaves the team running. From `ccc` the ex
   the panel in a web access browser only paths inside the project folder (by real path), as the app's own file actions.
 - A question is at most 20000 characters; a team keeps at most 50 open questions and 100000 characters waiting;
   closed questions are shortened and eventually dropped from the record. Marks: 200 per team, label one line of at most
-  200 characters.
+  200 characters. A team's stats list every current member and the 50 that left most recently; older former members are
+  folded into the totals (a count says how many), so a long-lived team's record stays small.
 - Question answers are not stored by the plugin (only when they were answered); the answer text is in the room log.
+- A team being started (`ccc team start`, New team) takes no other change until its invite or its lead's tab is made
+  ("the team is still being set up"). A start that fails deletes its new room, unless something else joined or changed
+  it meanwhile: then the room is kept and the error says so.
 - Rooms keeps only 50 ended rooms: Delete a finished team to free one. The room caps default to 5 rooms per project
   and 20 members per room; change them in Settings > General > Plugin limits.
 - Time is measured from polls (about 5 s) and checkpoints (60 s): an app crash can lose about a minute.

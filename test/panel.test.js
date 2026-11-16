@@ -62,7 +62,7 @@ function setup(opts = {}) {
   const questions = createQuestions(f.ctx, teams)
   const metrics = createMetrics(f.ctx, teams, { now, setTimeout: mt.setTimeout, clearTimeout: mt.clearTimeout })
   const ending = createEnding(f.ctx, teams, metrics, { now })
-  const hiring = createHiring(f.ctx, metrics)
+  const hiring = createHiring(f.ctx, metrics, questions.names, teams.guard)
   const inst = { teams, questions, metrics, ending, hiring }
   const panel = createPanel(f.ctx, inst, { now, setTimeout: pt.setTimeout, clearTimeout: pt.clearTimeout })
   panel.start()
@@ -394,6 +394,30 @@ test('mark: by the person; a boundary label is refused', async () => {
   assert.match(bad.error, /span's end/)
 })
 
+test('panel fields count as the rules behind them do: code points, after the trim', async () => {
+  const s = setup()
+  const { roomId } = await team(s)
+  // A mark label is 200 characters (code points) after the trim, as `ccc team mark` takes it: 200 emoji are 400
+  // UTF-16 units, and padding the CLI would trim is not a reason to refuse either.
+  const emoji = '\u{1F600}'
+  for (const label of [emoji.repeat(200), ' '.repeat(300) + emoji.repeat(150) + ' '.repeat(300)]) {
+    const r = await act(s.f, { type: 'mark', roomId, label })
+    assert.equal(r.ok, true, r.error)
+  }
+  const long = await act(s.f, { type: 'mark', roomId, label: emoji.repeat(201) })
+  assert.equal(long.ok, false)
+  assert.match(long.error, /a mark label is at most 200 characters/)
+  const absurd = await act(s.f, { type: 'mark', roomId, label: 'x'.repeat(801) })
+  assert.equal(absurd.ok, false)
+  assert.match(absurd.error, /label is far longer than 200 characters/)
+  // A team title is Rooms' 60 code points after the trim.
+  const t = await act(s.f, { type: 'new-team', title: ' '.repeat(400) + emoji.repeat(60), name: 'boss' })
+  assert.equal(t.ok, true, t.error)
+  const tLong = await act(s.f, { type: 'new-team', title: emoji.repeat(61), name: 'boss' })
+  assert.equal(tLong.ok, false)
+  assert.match(tLong.error, /longer than 60 characters/)
+})
+
 test('end and export: into a folder resolved against the project, no budget; a second end is refused', async () => {
   const s = setup()
   const { roomId } = await team(s)
@@ -461,6 +485,21 @@ test('reply and done: through the shared questions instance', async () => {
   assert.match(unknown.error, /no such question/)
 })
 
+test('reply: the panel counts characters as Rooms does (an emoji is one); done on an ended team is refused', async () => {
+  const s = setup()
+  const { roomId, devTab } = await team(s)
+  const found = { team: await s.inst.teams.get(roomId), member: { name: 'dev', tabId: devTab } }
+  await s.inst.questions.ask(found, 'A or B?')
+  await s.inst.questions.ask(found, 'And C?')
+  const r = await act(s.f, { type: 'reply', roomId, id: 'q1', text: '\u{1F600}'.repeat(10001) })
+  assert.equal(r.ok, true, r.error)
+  await act(s.f, { type: 'end', roomId })
+  const d = await act(s.f, { type: 'done', roomId, id: 'q2' })
+  assert.equal(d.ok, false)
+  assert.match(d.error, /ended/)
+  assert.equal((await s.inst.teams.get(roomId)).questions[1].doneAt, undefined)
+})
+
 test('fire: a member by name; an unknown name is refused before Rooms is asked', async () => {
   const s = setup()
   const { roomId } = await team(s)
@@ -524,6 +563,23 @@ test('docs and doc: the list sorted, a doc\'s text read-only; a bad path is Room
   // An ended team's docs stay readable.
   await s.f.ctx.rooms.end(roomId)
   assert.equal((await act(s.f, { type: 'doc', roomId, path: 'shared/plan.md' })).ok, true)
+})
+
+test('doc: the longest path Rooms allows is listed and opened (no shorter limit of the panel\'s own)', async () => {
+  const s = setup()
+  const { roomId } = await team(s)
+  const part = (c) => c.repeat(128)
+  const long = `shared/${part('a')}/${part('b')}/${part('c')}/${part('d')}.md`.replace(/d+\.md$/, (x) => 'd'.repeat(125) + '.md')
+  assert.ok(long.length > 500)
+  await s.f.ctx.rooms.docs.put(roomId, long, 'deep')
+  const list = await act(s.f, { type: 'docs', roomId })
+  assert.ok(list.docs.some((d) => d.path === long))
+  const doc = await act(s.f, { type: 'doc', roomId, path: long })
+  assert.equal(doc.ok, true, doc.error)
+  assert.equal(doc.text, 'deep')
+  // Past any path Rooms could hold, the panel refuses before asking.
+  const huge = await act(s.f, { type: 'doc', roomId, path: 'shared/' + 'x/'.repeat(3000) + 'y' })
+  assert.equal(huge.ok, false)
 })
 
 test('panel actions count as the person\'s activity; activity paging does not', async () => {
@@ -915,7 +971,7 @@ test('a state too big to post falls back to the summary, saying so; the next pus
 
 test('a change during a running push is one more push after it, carrying the newer state', async () => {
   const s = setup()
-  const { roomId, devTab } = await team(s)
+  const { roomId } = await team(s)
   await s.f.page({ type: 'hello', selected: roomId })
   await s.fire()
   const list = s.f.ctx.rooms.list
@@ -930,8 +986,11 @@ test('a change during a running push is one more push after it, carrying the new
   const first = s.panel.push()
   await settle()
   const n0 = postsOf(s.f, 'state').length
-  // Two changes while the push waits on rooms.list: no second push runs alongside, one more is owed.
-  await s.inst.questions.ask({ team: await s.inst.teams.get(roomId), member: { name: 'dev', tabId: devTab } }, 'Why?')
+  // Two changes while the push waits on rooms.list: no second push runs alongside, one more is owed. A record write
+  // of its own (an ask now refreshes inside its guard, which queues behind this push's gated refresh).
+  const rec = await s.inst.teams.get(roomId)
+  rec.questions.push({ id: 'q1', from: 'dev', text: 'Why?', askedAt: Date.now() })
+  await s.inst.teams.save(rec)
   assert.equal(s.panel.push(), first)
   assert.equal(s.panel.push(), first)
   release()
@@ -970,6 +1029,66 @@ test('a failing source of the state (stats, refresh, room list, sessions) degrad
     if (which === 'sessions') assert.equal(st.team.members.find((m) => m.name === 'dev').status, 'closed')
     host.deactivate()
   }
+})
+
+test('new team: a team still being set up refuses Hire, Invite, Mark and End; a failed lead open then deletes only its own room (round 10)', async () => {
+  // The repro: a Hire landed while the lead's open was on its way, the open failed and the cleanup deleted the room
+  // with the hired member in it.
+  const s = setup()
+  const realOpen = s.f.ctx.rooms.open
+  let release
+  let reached
+  const gate = new Promise((r) => (release = r))
+  const came = new Promise((r) => (reached = r))
+  let first = true
+  s.f.ctx.rooms.open = async (id, o) => {
+    if (!first) return realOpen(id, o)
+    first = false
+    reached(id)
+    await gate
+    throw new Error('rooms.open: at most 10 opens a minute')
+  }
+  const pending = s.f.page({ type: 'new-team', req: 'nt', title: 'T', kickoff: 'lead.md' })
+  const roomId = await came
+  for (const m of [
+    { type: 'hire', roomId, name: 'dev', kickoff: 'dev.md' },
+    { type: 'invite', roomId, name: 'qa' },
+    { type: 'mark', roomId, label: 'm' },
+  ]) {
+    const res = await act(s.f, m)
+    assert.equal(res.ok, false, m.type)
+    assert.match(res.error, /still being set up/, m.type)
+  }
+  await assert.rejects(s.inst.ending.endTeam(roomId), /still being set up/)
+  release()
+  await pending
+  const r = s.f.posts.find(([, m]) => m.type === 'result' && m.req === 'nt')[1]
+  assert.equal(r.ok, false)
+  assert.match(r.error, /at most 10 opens/)
+  assert.doesNotMatch(r.error, /was kept/)
+  assert.equal(s.f.rooms.size, 0)
+  assert.equal(await s.inst.teams.get(roomId), undefined)
+})
+
+test('new team: a failed lead open keeps a room someone else changed meanwhile', async () => {
+  const s = setup()
+  const realOpen = s.f.ctx.rooms.open
+  let first = true
+  s.f.ctx.rooms.open = async (id, o) => {
+    if (!first) return realOpen(id, o)
+    first = false
+    // A member arrives by a path the plugin's guard does not cover (core's room view), then the lead's open fails.
+    await realOpen(id, { name: 'other' })
+    throw new Error('rooms.open: timed out')
+  }
+  const r = await act(s.f, { type: 'new-team', title: 'T', kickoff: 'lead.md' })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /rooms\.open: timed out/)
+  assert.match(r.error, /was kept/)
+  const [room] = s.f.rooms.values()
+  assert.equal(room.endedAt, undefined)
+  assert.ok(room.members.has('other'))
+  assert.ok(await s.inst.teams.get(room.id))
 })
 
 test('new team: a failing focus of the lead tab is logged; the team is made and answered', async () => {

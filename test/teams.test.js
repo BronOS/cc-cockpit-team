@@ -2,7 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { fakeCtx } = require('./fake-ctx')
-const { createTeams, TeamError, NOT_IN_TEAM, NOT_COORDINATOR, KEY_PREFIX } = require('../lib/teams.js')
+const { createTeams, createTeamGuard, createNameLocks, EXPORTING, STARTING, TeamError, NOT_IN_TEAM, NOT_COORDINATOR, KEY_PREFIX } = require('../lib/teams.js')
 
 /** A room of this plugin with a coordinator `lead` and a member `dev`, each in its own tab, and its record. */
 async function setup(opts) {
@@ -239,7 +239,7 @@ test('a stored endedAt: null does not end a live team; createdAt and title are r
   assert.equal((await teams.requireCoordinator({ tabId: lead })).member.name, 'lead')
 })
 
-test('a storage failure on one record does not fail the reconcile and is retried', async () => {
+test('a storage failure does not hold Rooms\' state back: memory ends the team at once, the write is retried', async () => {
   const { f, teams, id } = await setup()
   await teams.load()
   f.advance(1000)
@@ -248,12 +248,79 @@ test('a storage failure on one record does not fail the reconcile and is retried
   f.ctx.storage.set = async () => {
     throw new RangeError('value too large')
   }
+  const told = []
+  teams.onChange((roomId) => told.push(roomId))
   await teams.refresh() // does not throw
-  assert.equal((await teams.get(id)).endedAt, undefined, 'memory does not look done')
+  // Round 8: the record stayed live while storage was full, and Delete refused it for as long.
+  const roomEnded = f.rooms.get(id).endedAt
+  assert.equal((await teams.get(id)).endedAt, roomEnded, 'memory takes Rooms\' endedAt')
+  assert.ok(told.includes(id), 'the panel is told')
+  assert.equal(f.store.get(KEY_PREFIX + id).endedAt, undefined, 'not stored yet')
+  await teams.refresh() // still failing: still ended, still not stored
+  assert.equal((await teams.get(id)).endedAt, roomEnded)
   f.ctx.storage.set = realSet
   await teams.refresh()
-  assert.equal((await teams.get(id)).endedAt, f.store.get(KEY_PREFIX + id).endedAt)
-  assert.notEqual(f.store.get(KEY_PREFIX + id).endedAt, undefined)
+  assert.equal(f.store.get(KEY_PREFIX + id).endedAt, roomEnded, 'written by the next reconcile')
+})
+
+test('a failed save is written again by the next reconcile (memory is the truth)', async () => {
+  const { f, teams, id } = await setup()
+  const rec = await teams.get(id)
+  rec.marks.push({ at: 1, label: 'x' })
+  const realSet = f.ctx.storage.set
+  f.ctx.storage.set = async () => {
+    throw new RangeError('storage would exceed')
+  }
+  await assert.rejects(teams.save(rec), /would exceed/)
+  f.ctx.storage.set = realSet
+  await teams.refresh()
+  assert.equal(f.store.get(KEY_PREFIX + id).marks.length, 1)
+})
+
+test('a fresh record of an adopted room is in memory even when its first write fails', async () => {
+  const f = fakeCtx()
+  const { id } = await f.ctx.rooms.create({ title: 'Adopted' })
+  const teams = createTeams(f.ctx)
+  const realSet = f.ctx.storage.set
+  f.ctx.storage.set = async () => {
+    throw new RangeError('full')
+  }
+  await teams.load()
+  assert.equal((await teams.get(id)).title, 'Adopted')
+  assert.equal(f.store.has(KEY_PREFIX + id), false)
+  f.ctx.storage.set = realSet
+  await teams.refresh()
+  assert.equal(f.store.get(KEY_PREFIX + id).title, 'Adopted')
+})
+
+test('ended: a provisional end in memory when no refresh could bring Rooms\' time; the next reconcile puts Rooms\' in', async () => {
+  const { f, teams, id } = await setup()
+  await teams.load()
+  f.advance(5000)
+  await f.ctx.rooms.end(id)
+  await teams.ended(id, 42)
+  assert.equal((await teams.get(id)).endedAt, 42)
+  assert.equal(f.store.get(KEY_PREFIX + id).endedAt, 42)
+  await teams.refresh()
+  assert.equal((await teams.get(id)).endedAt, f.rooms.get(id).endedAt)
+  assert.equal(f.store.get(KEY_PREFIX + id).endedAt, f.rooms.get(id).endedAt)
+  // An ended record is left as it is.
+  await teams.ended(id, 7)
+  assert.equal((await teams.get(id)).endedAt, f.rooms.get(id).endedAt)
+})
+
+test('guard.live: refuses a team that is gone, replaced or ended; answers the record otherwise', async () => {
+  const { f, teams, id } = await setup()
+  const rec = await teams.get(id)
+  assert.equal(teams.guard.live(id, rec), rec)
+  assert.equal(teams.guard.live(id), rec)
+  assert.throws(() => teams.guard.live('nope'), (e) => e instanceof TeamError && e.code === 'no-team')
+  assert.throws(() => teams.guard.live(id, { ...rec }), (e) => e.code === 'no-team')
+  await f.ctx.rooms.end(id)
+  await teams.guard.refresh()
+  assert.throws(() => teams.guard.live(id, rec), (e) => e.code === 'ended' && e.message === 'the team has ended')
+  // A guard built alone checks nothing.
+  assert.equal(createTeamGuard().live('any', rec), rec)
 })
 
 test('a caller with no tab never matches a member that has none', async () => {
@@ -322,7 +389,7 @@ test('a failed load is retried by the next call', async () => {
   assert.equal((await teams.get(id)).title, 'T')
 })
 
-test('a failed delete of a gone room\'s record is logged and retried: the next refresh drops it', async () => {
+test('a gone room leaves memory at once; a failed key delete is logged and retried by the next refresh', async () => {
   const { f, teams, id } = await setup()
   await teams.load()
   await f.ctx.rooms.end(id)
@@ -335,9 +402,119 @@ test('a failed delete of a gone room\'s record is logged and retried: the next r
   }
   await teams.refresh()
   assert.match(warned.join('\n'), /drop/)
-  assert.ok(await teams.get(id), 'kept while its key could not be deleted')
+  assert.equal(await teams.get(id), undefined, 'gone from memory with its room')
+  assert.equal(f.store.has(KEY_PREFIX + id), true, 'the key is still stored')
   f.ctx.storage.delete = del
   await teams.refresh()
-  assert.equal(await teams.get(id), undefined)
   assert.equal(f.store.has(KEY_PREFIX + id), false)
+})
+
+test('remove forgets the record in memory even when the key delete fails; the next refresh deletes the key', async () => {
+  const { f, teams, id } = await setup()
+  await f.ctx.rooms.end(id)
+  await f.ctx.rooms.delete(id)
+  const del = f.ctx.storage.delete
+  f.ctx.storage.delete = async () => {
+    throw new Error('disk busy')
+  }
+  await teams.remove(id) // does not throw: the room is gone
+  assert.equal(await teams.get(id), undefined)
+  f.ctx.storage.delete = del
+  await teams.refresh()
+  assert.equal(f.store.has(KEY_PREFIX + id), false)
+})
+
+test('export guard: a change is refused while its team is held, waited for when it started first, free again after', async () => {
+  const g = createTeamGuard()
+  let finish
+  const running = g.change('r1', () => new Promise((r) => (finish = r)))
+  const order = []
+  let refused = null
+  const held = g.exclusive('r1', async (settled) => {
+    // Held at once: a new change of r1 is refused, another team's is not.
+    refused = await g.change('r1', async () => 'no').catch((e) => e)
+    assert.equal(await g.change('r2', async () => 'other'), 'other')
+    assert.equal(g.exporting('r1'), true)
+    const waited = settled().then(() => order.push('settled'))
+    await new Promise((r) => setImmediate(r))
+    order.push('finish')
+    finish('first')
+    await waited
+    // A second exclusive hold of the same team is refused.
+    await assert.rejects(g.exclusive('r1', async () => {}), /already being ended/)
+    throw new Error('export failed')
+  })
+  assert.equal(await running, 'first')
+  await assert.rejects(held, /export failed/)
+  assert.ok(refused instanceof TeamError)
+  assert.equal(refused.code, 'exporting')
+  assert.equal(refused.message, EXPORTING)
+  assert.deepEqual(order, ['finish', 'settled'])
+  // The hold ended with its failure: changes run again; nothing running settles at once.
+  assert.equal(g.exporting('r1'), false)
+  assert.equal(await g.change('r1', async () => 'again'), 'again')
+  assert.equal(await g.exclusive('r1', (settled) => settled().then(() => 'idle')), 'idle')
+})
+
+test('setup guard: a team being set up refuses every change but its own and an End; free again after a failure', async () => {
+  const g = createTeamGuard()
+  let own = null
+  const run = g.setup('r1', async (token) => {
+    own = token
+    assert.equal(g.starting('r1'), true)
+    const other = await g.change('r1', async () => 'no').catch((e) => e)
+    assert.ok(other instanceof TeamError)
+    assert.equal(other.code, 'starting')
+    assert.equal(other.message, STARTING)
+    // A token of another room or a forged one is not this setup's.
+    await assert.rejects(g.change('r1', async () => 'no', { roomId: 'r1' }), /still being set up/)
+    assert.equal(await g.change('r1', async () => 'mine', token), 'mine')
+    assert.equal(await g.change('r2', async () => 'other team'), 'other team')
+    await assert.rejects(g.exclusive('r1', async () => {}), /still being set up/)
+    throw new Error('invite failed')
+  })
+  await assert.rejects(run, /invite failed/)
+  assert.ok(own)
+  assert.equal(g.starting('r1'), false)
+  assert.equal(await g.change('r1', async () => 'free'), 'free')
+  assert.equal(await g.exclusive('r1', (settled) => settled().then(() => 'idle')), 'idle')
+})
+
+test('every teams instance has its own export guard', () => {
+  const f = fakeCtx()
+  const a = createTeams(f.ctx)
+  assert.equal(typeof a.guard.change, 'function')
+  assert.notEqual(a.guard, createTeams(f.ctx).guard)
+})
+
+test('name locks: reply, ask and mark of one name run together; hire and fire are alone and refuse them (and are refused)', async () => {
+  const names = createNameLocks()
+  let release
+  const gate = new Promise((r) => (release = r))
+  const kinds = ['reply', 'ask', 'mark']
+  const running = kinds.map((k) => names.hold('r1', 'dev', k, () => gate))
+  // Every member-stays kind may join the others; a hire or a fire is refused while any of them holds the name.
+  for (const k of kinds) assert.equal(await names.hold('r1', 'dev', k, async () => k), k)
+  await assert.rejects(names.hold('r1', 'dev', 'fire', async () => 1), (e) => e instanceof TeamError && /-pending$/.test(e.code) && /try again in a moment/.test(e.message))
+  await assert.rejects(names.hold('r1', 'dev', 'hire', async () => 1), /try again in a moment/)
+  // Another name, or the same name in another room, is free.
+  assert.equal(await names.hold('r1', 'qa', 'fire', async () => 'ok'), 'ok')
+  assert.equal(await names.hold('r2', 'dev', 'fire', async () => 'ok'), 'ok')
+  release()
+  await Promise.all(running)
+  // Released: a fire holds it now, and refuses an ask and a mark in its own words.
+  let free
+  const fire = names.hold('r1', 'dev', 'fire', () => new Promise((r) => (free = r)))
+  await assert.rejects(names.hold('r1', 'dev', 'ask', async () => 1), (e) => e.code === 'fire-pending' && e.message === 'dev is being fired: try again in a moment')
+  await assert.rejects(names.hold('r1', 'dev', 'mark', async () => 1), (e) => e.code === 'fire-pending')
+  await assert.rejects(names.hold('r1', 'dev', 'fire', async () => 1), (e) => e.message === 'dev is already being fired')
+  free()
+  await fire
+  // An ask's own text, for a hire refused by it.
+  let done
+  const ask = names.hold('r1', 'dev', 'ask', () => new Promise((r) => (done = r)))
+  await assert.rejects(names.hold('r1', 'dev', 'hire', async () => 1), (e) => e.code === 'ask-pending' && e.message === 'dev is asking a question: try again in a moment')
+  done()
+  await ask
+  await assert.rejects(names.hold('r1', 'dev', 'bogus', async () => 1), TypeError)
 })

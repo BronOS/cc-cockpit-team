@@ -49,7 +49,18 @@ const badDocText = (text) => {
   return false
 }
 const TITLE_FORBIDDEN = new Set([...'"\'`'+String.fromCharCode(0x201c, 0x201d, 0x201e, 0x201f, 0x2018, 0x2019, 0x201a, 0x201b, 0xab, 0xbb, 0x2039, 0x203a)+'()[]{}<>'])
-const badTitle = (title) => [...title].some((ch) => CONTROL.test(ch) || TITLE_FORBIDDEN.has(ch))
+/** Rooms' checkRoomTitle (room-names.ts): each character checked, then trimmed, 1-60 code points. The reason or null. */
+const titleRefusal = (title) => {
+  if (typeof title !== 'string') return 'title must be a string'
+  for (const ch of title) {
+    if (CONTROL.test(ch)) return 'title may not contain control, bidi or invisible format characters'
+    if (TITLE_FORBIDDEN.has(ch)) return 'title may not contain quote or bracket characters'
+  }
+  const value = title.trim()
+  if (value === '') return 'title must not be empty'
+  if ([...value].length > 60) return 'title is longer than 60 characters'
+  return null
+}
 
 function fakeCtx(opts = {}) {
   const projectDir = opts.projectDir || '/proj'
@@ -168,10 +179,10 @@ function fakeCtx(opts = {}) {
 
   const roomsApi = {
     async create(options) {
-      const title = options && options.title
-      if (typeof title !== 'string' || title.length < 1 || title.length > 60 || badTitle(title)) {
-        throw refuse('rooms.create', 'title is 1-60 characters on one line, no quote, bracket, control or bidi character')
-      }
+      const why = titleRefusal(options && options.title)
+      if (why) throw refuse('rooms.create', why)
+      // Stored trimmed, as Rooms does.
+      const title = options.title.trim()
       const all = [...rooms.values()]
       if (all.filter((r) => r.endedAt === undefined).length >= caps.rooms) {
         throw refuse('rooms.create', `at most ${caps.rooms} rooms (roomsPerProject)`)
@@ -270,7 +281,8 @@ function fakeCtx(opts = {}) {
     },
     async send(id, to, text) {
       const r = live('rooms.send', id)
-      if (typeof text !== 'string' || text.length > SEND_MAX) throw refuse('rooms.send', `at most ${SEND_MAX} characters`)
+      // Rooms counts code points (room-registry.ts isMessageText): an emoji is one character.
+      if (typeof text !== 'string' || [...text].length > SEND_MAX) throw refuse('rooms.send', `at most ${SEND_MAX} characters`)
       if (text.trim() === '') throw refuse('rooms.send', 'a message is non-empty text of at most 20000 characters')
       if (badDocText(text)) throw refuse('rooms.send', 'a message is text with no control, bidi or invisible format character but tab and line breaks')
       const recipients = to === 'all' ? [...r.members.values()] : [r.members.get(to)].filter(Boolean)
@@ -383,6 +395,18 @@ function fakeCtx(opts = {}) {
       keys: async () => [...store.keys()],
     },
     async notify(text, options) {
+      // The host's parseNotifyOptions (src/shared/notify.ts): a title is 1 to 80 UTF-16 units after the control
+      // characters go (longer rejects, which a plugin's notice must survive); the text is cut at 500, never rejected.
+      if (options !== undefined) {
+        if (options === null || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('notify: options must be an object')
+        if (options.title !== undefined) {
+          if (typeof options.title !== 'string') throw new TypeError('notify: title must be a string')
+          // eslint-disable-next-line no-control-regex
+          const t = options.title.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim()
+          if (t === '') throw new TypeError('notify: title must not be empty')
+          if (t.length > 80) throw new TypeError('notify: title is over 80 characters')
+        }
+      }
       notices.push({ text, options })
       return { clicked: false }
     },

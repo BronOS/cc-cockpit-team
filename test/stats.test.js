@@ -149,3 +149,51 @@ test('statsOf reads stored data defensively: null questions, marks, members and 
   assert.match(formatStats(s), /start -> one/)
   assert.doesNotMatch(formatStats(s), /undefined|NaN/)
 })
+
+test('foldOut past an open question: its time before the watermark still counts once it is answered', () => {
+  // Two records with the same history: `twin` keeps everything, `r` folds as compaction and the action cap do.
+  const make = () => rec({
+    questions: [
+      { id: 'q1', from: 'dev', askedAt: 1000 }, // open across both folds
+      { id: 'q2', from: 'dev', askedAt: 25_000 }, // open, overlaps q1's wait
+      { id: 'q3', from: 'lead', askedAt: 3000, answeredAt: 4000 },
+    ],
+    metrics: { members: { dev: {}, lead: {} }, logSeq: 0, actions: [2000, 40_000, 60_000] },
+  })
+  const twin = make()
+  const r = make()
+  const same = (until, why) => assert.equal(personActiveMs(r, until), personActiveMs(twin, until), why)
+  same(70_000, 'before any fold')
+  // The action cap drops the two oldest actions: the watermark moves to 55 s, past q1's and q2's asks.
+  foldOut(r, [], r.metrics.actions.splice(0, 2), 70_000)
+  same(70_000, 'right after the fold')
+  // q1 is answered later: [1 s, 65 s], most of it below the watermark.
+  for (const x of [r, twin]) x.questions[0].answeredAt = 65_000
+  same(100_000, 'q1 answered after the fold')
+  // Compaction drops q1 and q3 (closed): q2 is still open, so what q1 covered is counted and nothing twice.
+  foldOut(r, [r.questions[0], r.questions[2]], [], 100_000)
+  r.questions.splice(0, 1)
+  r.questions.splice(1, 1)
+  same(100_000, 'after q1 and q3 were dropped')
+  // q2 answered at 80 s: inside what q1 already covered, so it adds nothing; then everything is dropped.
+  for (const x of [r, twin]) x.questions.find((q) => q.id === 'q2').answeredAt = 80_000
+  same(120_000, 'q2 answered')
+  foldOut(r, r.questions.splice(0), r.metrics.actions.splice(0), 120_000)
+  same(120_000, 'everything folded')
+  assert.deepEqual(r.metrics.folded.gaps, [], 'no open question: no gap is kept')
+})
+
+test('foldOut keeps at most GAPS_MAX gaps (the oldest go) and reads stored gaps defensively', () => {
+  const { GAPS_MAX } = require('../lib/stats.js')
+  const actions = []
+  for (let i = 0; i < GAPS_MAX + 20; i++) actions.push(100_000 + i * 60_000)
+  const r = rec({ questions: [{ id: 'q1', from: 'dev', askedAt: 50_000 }], metrics: { members: { dev: {} }, logSeq: 0, actions } })
+  const t = 100_000 + actions.length * 60_000
+  foldOut(r, [], r.metrics.actions.splice(0), t)
+  assert.equal(r.metrics.folded.gaps.length, GAPS_MAX)
+  assert.ok(r.metrics.folded.gaps[0][0] > 50_000, 'the oldest gaps went')
+  const bad = rec({ metrics: { members: {}, logSeq: 0, folded: { personMs: 5, personUntil: 10, gaps: [[1, 2], 'x', [4, 3], [NaN, 5], [6, 20]] } } })
+  bad.questions.push({ id: 'q1', from: 'dev', askedAt: 0, answeredAt: 30 })
+  // Only [1, 2] is a usable gap below the watermark: 5 + 1 + (30 - 10).
+  assert.equal(personActiveMs(bad, 40), 26)
+})

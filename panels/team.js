@@ -15,8 +15,9 @@
   let stateError = null
   let selected = null
   let notice = null // { text, error }
-  let form = null // { kind, values, error, busy, result }
+  let form = null // { kind, roomId, values, error, busy, result }: roomId is the team it was opened for (null: New team)
   let lastLogSeq
+  let lastActKey // V.activityKey of the last state: the log position plus the marks (the activity's own "as of")
   let logTimer = null
   // What the last state looked like (whole, and without the running numbers), and whether a render waited for the
   // person to finish something (see `busy`).
@@ -29,14 +30,19 @@
   const docs = { roomId: null, list: [], more: false, loading: false, error: null, seq: undefined, gen: 0, dirty: false }
   let openDoc = null // { path, text, loading, error }
   const drafts = new Map() // `${roomId}:${id}` -> reply text typed so far
-  const replying = new Set() // question ids with a reply or done in flight
+  const replying = new Set() // `${roomId}:${id}` of the questions with a reply or done in flight (ids repeat across teams)
 
   // ---- requests ----
   let reqN = 0
   const pending = new Map()
   const REQ_TIMEOUT_MS = 5 * 60 * 1000
 
-  /** Post a request and resolve with the host's `result` (a missing answer resolves as a refusal, never hangs). */
+  /**
+   * Post a request and resolve with the host's `result` (a missing answer resolves as a refusal, never hangs). A
+   * post the SDK refuses (it throws for a message over 1 MiB as JSON: a pasted reply, a long form field) resolves as a
+   * refusal too: a rejection here skipped the caller's cleanup and left its controls (`replying`, a form's `busy`)
+   * disabled until a reload.
+   */
   function request(message) {
     const req = ++reqN
     return new Promise((resolve) => {
@@ -48,7 +54,17 @@
         clearTimeout(timer)
         resolve(res)
       })
-      ccPanel.post({ ...message, req })
+      try {
+        ccPanel.post({ ...message, req })
+      } catch (err) {
+        clearTimeout(timer)
+        pending.delete(req)
+        const big = err && err.name === 'RangeError'
+        resolve({
+          ok: false,
+          error: big ? 'Too large to send to the plugin (at most 1 MiB): shorten it.' : `Could not send to the plugin: ${(err && err.message) || err}`,
+        })
+      }
     })
   }
 
@@ -93,6 +109,7 @@
   // ---- state in ----
   function resetPerTeam() {
     lastLogSeq = undefined
+    lastActKey = undefined
     lastFull = null
     // A request of the old team may still be running: a new generation makes its answer stale, and `loading` is
     // cleared here so the new team's first load is not dropped behind it.
@@ -119,7 +136,11 @@
     docs.seq = undefined
     docs.roomId = selected
     openDoc = null
+    // Everything open for the old team goes with it, whatever moved the selection (a click, the auto-select after a
+    // delete or an end): a member menu left open over the new team sent its Fire there (a member of the same name).
+    // Every request still carries the team it was opened for (form.roomId, the menu's and the questions' roomId).
     if (form && form.kind !== 'new-team') form = null
+    closeMenu()
   }
 
   function select(roomId) {
@@ -156,6 +177,12 @@
       lastLogSeq = team.logSeq
       scheduleLogRefresh()
     }
+    // A new mark is no log entry (it moves no logSeq) but is in the activity: the activity alone is asked again.
+    const actKey = team ? V.activityKey(team) : lastActKey
+    if (actKey !== lastActKey) {
+      lastActKey = actKey
+      scheduleLogRefresh()
+    }
     // The host pushes a state every few seconds (the elapsed time moves), and a render rebuilds the page: a scroll
     // position, a text selection, an open select and a half-typed answer would be lost. So a state that changed
     // nothing renders nothing, and one that changed only the running numbers waits while the person is in the middle of
@@ -190,7 +217,10 @@
     if (deferred && !busy()) render()
   }
 
-  /** The room log moved: ask the activity and the docs list again (never a doc's text: a read is logged). */
+  /**
+   * The room log moved, or a mark was added: ask again what is open and not as of now (the activity by its key, the
+   * docs list by the log position). Never a doc's text: a read is logged.
+   */
   function scheduleLogRefresh() {
     if (logTimer !== null) return
     logTimer = setTimeout(() => {
@@ -200,8 +230,8 @@
   }
   function refreshLog() {
     if (!selected) return
-    if (open.activity) loadActivity(false, true)
-    if (open.docs) loadDocs(true)
+    if (open.activity && activity.seq !== lastActKey) loadActivity(false, true)
+    if (open.docs && docs.seq !== lastLogSeq) loadDocs(true)
   }
 
   /** A held entry is newer than another: by seq when both have one (marks have none), else by time. */
@@ -209,7 +239,8 @@
 
   /**
    * Ask for the activity (the first page, or the next older one). A call made while one runs is not lost: it marks
-   * `dirty` and the running one re-asks when it ends, so a filter change is never shown over the old filter's entries.
+   * `dirty` and the running one re-asks when it ends (a log refresh). A filter change does not wait: it starts a new
+   * generation, so the running request's answer (the old filter's) is dropped.
    * The log position the list is "as of" is the one when it was ASKED (an entry logged during the request is newer).
    */
   async function loadActivity(older, quiet) {
@@ -220,7 +251,7 @@
       return
     }
     const gen = ++activity.gen
-    const askedAt = team ? team.logSeq : lastLogSeq
+    const askedAt = team ? V.activityKey(team) : lastActKey
     activity.loading = true
     activity.dirty = false
     activity.roomId = roomId
@@ -290,10 +321,13 @@
 
   async function readDoc(path) {
     const roomId = selected
-    openDoc = { path, text: null, loading: true, error: null }
+    // Each read owns its own object: two reads of the same path (a double click, Refresh) can answer out of order,
+    // and a path check alone let the older answer overwrite the newer text.
+    const mine = { path, text: null, loading: true, error: null }
+    openDoc = mine
     render()
     const res = await request({ type: 'doc', roomId, path })
-    if (!openDoc || openDoc.path !== path || roomId !== selected) return
+    if (openDoc !== mine || roomId !== selected) return
     openDoc.loading = false
     if (res.ok) openDoc.text = typeof res.text === 'string' ? res.text : ''
     else openDoc.error = res.error
@@ -308,14 +342,15 @@
     return res
   }
 
-  async function reply(q) {
-    const key = `${selected}:${q.id}`
-    const built = V.replyRequest(selected, q.id, drafts.get(key))
+  /** Reply to question `q` of team `roomId` (the team it was drawn for, never the selection at the time of the click). */
+  async function reply(roomId, q) {
+    const key = `${roomId}:${q.id}`
+    const built = V.replyRequest(roomId, q.id, drafts.get(key))
     if (built.error) return say(built.error, true)
-    replying.add(q.id)
+    replying.add(key)
     render()
     const res = await request(built.message)
-    replying.delete(q.id)
+    replying.delete(key)
     if (res.ok) {
       drafts.delete(key)
       // A held answer is in the member's queue but nobody pointed it there (a paused room after a restart, a typed
@@ -325,23 +360,25 @@
     } else say(res.error, true)
   }
 
-  async function done(q) {
-    replying.add(q.id)
+  async function done(roomId, q) {
+    const key = `${roomId}:${q.id}`
+    replying.add(key)
     render()
-    const res = await request({ type: 'done', roomId: selected, id: q.id })
-    replying.delete(q.id)
+    const res = await request({ type: 'done', roomId, id: q.id })
+    replying.delete(key)
     if (res.ok) say(`Question from ${q.from} marked done.`, false)
     else say(res.error, true)
   }
 
-  const focusMember = (m) => simple({ type: 'focus', roomId: selected, name: m.name }, () => `Showing ${m.name}'s tab.`)
+  const focusMember = (roomId, m) => simple({ type: 'focus', roomId, name: m.name }, () => `Showing ${m.name}'s tab.`)
 
   /** Forms that cannot be undone: Enter in one of their fields must not submit it. */
   const CONFIRMS = new Set(['end', 'delete', 'fire'])
 
+  /** Open a form; every one but New team is bound to the team selected now (`roomId`, what its request names). */
   function openForm(kind, values) {
     notice = null
-    form = { kind, values: values || {}, error: null, busy: false, result: null }
+    form = { kind, roomId: kind === 'new-team' ? null : selected, values: values || {}, error: null, busy: false, result: null }
     render()
     // A confirm has no field worth typing in: focus goes to Cancel, the safe choice (a button the click replaced took
     // the focus with it). A form with fields focuses the first one.
@@ -353,23 +390,26 @@
     render()
   }
 
+  /** The form's request, for the team it was opened for (`f.roomId`), never the selection now. */
   function buildRequest(f) {
     const v = f.values
+    const roomId = f.roomId
+    if (f.kind !== 'new-team' && (!roomId || roomId !== selected)) return { error: 'This form was for another team: open it again.' }
     switch (f.kind) {
       case 'new-team':
         return V.newTeamRequest(v)
       case 'hire':
-        return V.hireRequest(selected, v)
+        return V.hireRequest(roomId, v)
       case 'invite':
-        return V.inviteRequest(selected, v)
+        return V.inviteRequest(roomId, v)
       case 'mark':
-        return V.markRequest(selected, v.label)
+        return V.markRequest(roomId, v.label)
       case 'end':
-        return V.endRequest(selected, v.dir)
+        return V.endRequest(roomId, v.dir)
       case 'delete':
-        return { message: { type: 'delete', roomId: selected } }
+        return { message: { type: 'delete', roomId } }
       case 'fire':
-        return { message: { type: 'fire', roomId: selected, name: f.values.name } }
+        return { message: { type: 'fire', roomId, name: f.values.name } }
       default:
         return { error: 'unknown form' }
     }
@@ -432,8 +472,13 @@
     menuHost.replaceChildren()
     return had
   }
+  /**
+   * A member row's menu, bound to the team selected now: a team change closes it (resetPerTeam), and an item of a
+   * menu that is no longer the open one, or of a team no longer selected, does nothing.
+   */
   function openMenu(anchor, label, items) {
     closeMenu()
+    const roomId = selected
     const rect = anchor.getBoundingClientRect()
     // A render may have replaced the anchor while the menu was open: focus goes back to its successor.
     const refocus = () => {
@@ -442,7 +487,13 @@
     }
     const menu = h('div', { class: 'cc-menu', role: 'menu', 'aria-label': label })
     const buttons = items.map((it) =>
-      h('button', { role: 'menuitem', class: it.danger ? 'cc-danger' : '', onclick: () => { closeMenu(); refocus(); it.run() } }, it.label),
+      h('button', { role: 'menuitem', class: it.danger ? 'cc-danger' : '', onclick: () => {
+        const current = menuHost.firstChild === menu && roomId === selected
+        closeMenu()
+        if (!current) return
+        refocus()
+        it.run(roomId)
+      } }, it.label),
     )
     menu.append(...buttons)
     menu.addEventListener('keydown', (e) => {
@@ -603,7 +654,7 @@
       // Also fires when the render sets `open`: only a change by the person counts.
       if (e.target.open === open[name]) return
       open[name] = e.target.open
-      if (open[name] && name === 'activity' && activity.seq !== lastLogSeq) loadActivity(false)
+      if (open[name] && name === 'activity' && activity.seq !== lastActKey) loadActivity(false)
       if (open[name] && name === 'docs' && docs.seq !== lastLogSeq) loadDocs()
     } },
     h('summary', { class: 'cc-group-title', 'data-key': `sum-${name}` }, title, count !== null ? h('span', { class: 'cc-count' }, ` ${count}`) : null),
@@ -613,23 +664,31 @@
   function questionsBody() {
     const qs = team.questions
     if (qs.length === 0) return h('div', { class: 'cc-empty' }, h('p', {}, 'Nothing is waiting on you.'))
+    // An ended team is read-only: its open questions are shown, with nothing to answer or close them with.
+    const ended = team.endedAt !== undefined
     return h('div', {}, qs.map((q) => {
-      const key = `${team.roomId}:${q.id}`
-      const busy = replying.has(q.id)
-      return h('div', { class: 'cc-card question' },
+      const roomId = team.roomId
+      const key = `${roomId}:${q.id}`
+      const busy = replying.has(key)
+      const head = [
         h('div', { class: 'row-line' }, h('strong', {}, q.from), h('span', { class: 'cc-muted' }, `asked ${V.fmtTime(q.askedAt)}`)),
         h('div', { class: 'text' }, q.text),
+      ]
+      if (ended) return h('div', { class: 'cc-card question' }, head, h('p', { class: 'cc-muted' }, 'Not answered before the team ended.'))
+      return h('div', { class: 'cc-card question' },
+        head,
         h('textarea', {
           'data-key': `reply-${q.id}`, 'aria-label': `Answer to ${q.from}`, placeholder: 'Your answer', value: drafts.get(key) || '', disabled: busy,
           oninput: (e) => drafts.set(key, e.target.value),
         }),
         h('div', { class: 'actions' },
-          btn(busy ? 'Working…' : 'Reply', () => reply(q), { disabled: busy }),
-          btn('Done', () => done(q), { class: 'cc-ghost', disabled: busy, title: 'Close it without an answer' })))
+          btn(busy ? 'Working…' : 'Reply', () => reply(roomId, q), { disabled: busy }),
+          btn('Done', () => done(roomId, q), { class: 'cc-ghost', disabled: busy, title: 'Close it without an answer' })))
     }))
   }
 
   function memberRow(m) {
+    const roomId = team.roomId
     const s = V.statusInfo(m.status)
     const live = team.endedAt === undefined && m.in === true
     const meta = []
@@ -642,7 +701,7 @@
       ? h('button', { type: 'button', class: 'cc-icon', 'data-key': `act-${m.name}`, title: `Actions for ${m.name}`, 'aria-haspopup': 'menu', onclick: (e) => {
           e.stopPropagation()
           openMenu(e.currentTarget, `${m.name} actions`, [
-            { label: 'Show tab', run: () => focusMember(m) },
+            { label: 'Show tab', run: (rid) => focusMember(rid, m) },
             { label: 'Copy invite…', run: () => openForm('invite', {}) },
             { label: 'Fire…', danger: true, run: () => openForm('fire', { name: m.name }) },
           ])
@@ -650,9 +709,9 @@
       : null
     return h('li', {
       class: 'cc-row', tabindex: live ? 0 : null, 'data-key': live ? `member-${m.name}` : null, title: live ? 'Show this member\'s tab' : null,
-      onclick: live ? () => focusMember(m) : null,
+      onclick: live ? () => focusMember(roomId, m) : null,
       // Only the row's own Enter: the actions button's Enter bubbles up here and would also show the tab.
-      onkeydown: live ? (e) => { if (e.target === e.currentTarget && e.key === 'Enter') focusMember(m) } : null,
+      onkeydown: live ? (e) => { if (e.target === e.currentTarget && e.key === 'Enter') focusMember(roomId, m) } : null,
     },
     h('div', { class: 'cc-row-main' },
       h('span', { class: 'cc-row-title row-line' },
@@ -689,9 +748,18 @@
 
   function activityBody() {
     const names = team.members.map((m) => m.name)
+    // A filter change makes every running activity request stale, a "Load older" above all: its page is the old
+    // filter's, and appended (then kept by the refresh's merge) it showed wrong-kind entries and hid matching ones. A
+    // new generation drops its answer, as a team switch does, and the new filter's first page is asked at once.
     const change = () => {
+      activity.gen++
+      activity.loading = false
+      activity.dirty = false
+      activity.paged = false
       activity.entries = []
       activity.before = null
+      activity.more = false
+      activity.error = null
       loadActivity(false)
     }
     const filters = h('div', { class: 'cc-toolbar' },

@@ -74,7 +74,12 @@ The record is one storage value (1 MiB), so a team holds at most 50 open questio
 answer or a Done frees a place); closed questions never cause a refusal, they are compacted on a later ask (the oldest
 first cut to a one-line glance, marked `trimmed`, then dropped past 300 questions). A reply goes to the tab that asked:
 a member of the same name hired after a fire answers "left the team". That tab is known in memory only (restored tabs
-get new ids), so after a restart the reply goes by name. Done is refused while a reply is being sent.
+get new ids), so after a restart the reply goes by name. From the membership check to the send the reply holds the
+asker's name: the plugin's own fire and hire of that name are refused meanwhile ("an answer to <name> is being sent"),
+so a fire and rehire cannot take the answer; a removal from core's room view or a join by invite code does not go
+through the plugin and is not covered. Done is refused while a reply is being sent, and on an ended team (read-only:
+the panel shows its open questions without Reply or Done). Lengths are counted as Rooms counts them, in characters
+(code points: an emoji is one).
 
 ## 4. Metrics (raw facts only)
 
@@ -91,6 +96,12 @@ Kept in the team record, updated on status changes and log polls; shown live in 
 the members' tabs only (a member's subagents are in its tab's cost; work outside the team's tabs is not counted). Time
 between an app quit and the person's resume is not counted as working. The record keeps the newest 300 closed questions
 and 500 panel actions; what falls out is folded into stored counters first, so no total goes down as a team goes on.
+Every stored per-team value is bounded the same way (the record is one 1 MiB value): questions as in §3, 200 marks of
+at most 200 characters, 500 panel actions, 200 uncounted-gap entries, and **former members**: the record keeps a row for
+every current member and for the 50 that left most recently (`FORMER_MAX`, `lib/stats.js`); the ones that left longer
+ago are folded into one stored counter set (`metrics.folded.former`), so the totals (and the marks' span numbers) stay
+whole, `stats` and `metrics.md` say how many rows were folded, and only a name hired again after being folded starts a
+new row (its earlier numbers are in the totals). The log state is a cursor and a flag.
 
 ## 5. End and export
 
@@ -102,8 +113,48 @@ end), `metrics.json`, `metrics.md` (a table, split at marks), `questions.md`. Wi
 depth 4) and are checked again before writing; files are written with no-follow, never through a symlink, and every
 folder of the export is checked by realpath before each write and each cleanup removal (a folder swapped for a link
 stops the export, and the cleanup removes nothing through it). Files are 0600 and folders 0700 (members' private docs,
-message texts). `ccc team end` gives the export 20 s, inside the 30 s cut of a `ccc` call, so a too-big team fails
-and keeps running instead of ending unseen after exit 124; the panel has no budget.
+message texts). Before the stats are taken the metrics read the room log to its end, however long the backlog (a poll
+reads at most 20 pages a team); a log read failing there fails the export (the team keeps running). From the start of
+an End to its finish (success or failure) the team is held: the plugin's own changes to it (a reply, a Done, an ask, a
+mark, a hire, a fire, an invite, from `ccc team` or the panel) are refused with "the team is being exported and ended:
+try again in a moment", and the ones already running finish before the catch-up starts, so the stats, `log.jsonl` and
+`questions.md` see a team the plugin no longer changes (the panel's active-time count is skipped meanwhile). Members'
+own sends through Rooms are not the plugin's to hold: the room is live
+while the export runs, so `log.jsonl` stops at the log entry the stats were taken at (`logSeq` in `metrics.json`,
+named in `metrics.md`): both files cover the same entries, and what the room logged after that, before its end, is in
+neither (it stays in the room's log until Delete). `ccc team end` gives the export 20 s
+from the call's start (that catch-up included), inside the 30 s cut
+of a `ccc` call, so a too-big team fails and keeps running instead of ending unseen after exit 124; the budget and the
+call's abort signal are checked once more right before `rooms.end`. The panel has no budget.
+
+**The rule for every change** (hire, fire, invite, ask, reply, Done, mark, End, Delete, and the panel's actions, which
+go through the same functions): a change decides **all** its preconditions inside its guard (and its name lock when it
+takes one), after its last await and right before its write: the team is live and still the same record (after a
+refresh, so a room ended from core's room view counts), the member it acts for or on is (or is not, for a hire) in main's
+member list as read there, the question is still open, and the team is not being exported (the guard's entry). A check
+made before an await (`requireMember`, the panel's team lookup, a member list the caller read) is a fast path for a
+quick refusal only: an End can finish, a hire or a fire can land, while a change waits on a host call, and the hold of
+an End that already finished protects nothing (`createTeamGuard` in `lib/teams.js` states the rule where the guard is
+defined). Who the caller is (a member, a coordinator) is decided at the call's start, like any request's
+authorization; `ask` and a coordinator's `mark`, which write the caller's name into the record, check it again inside,
+holding that name from the member read to the save. Every change that acts for or on a member name holds the name's
+lock (`createNameLocks`): hire and fire alone; reply, ask and mark together (each only needs the member to stay), so a
+fire of an asker, of a marking coordinator or of a member an answer is on its way to is refused ("try again in a
+moment"), and the hire or fire of a name refuses them. Locks are taken in one order: the export guard, then the name
+lock inside it. Done acts on a question, not a name, and takes none. What a member
+or the person does through Rooms itself (a removal from core's room view, a join by invite code) can still land between
+the plugin's last read and its write: Rooms refuses that write by its own rules (an ended room takes no open, invite,
+send or remove).
+
+**A team being set up** (`ccc team start`, the panel's New team) is held by the same guard (`guard.setup`) from the
+moment `rooms.create` answers to the coordinator's invite or the lead's open, or to the cleanup of a start that failed:
+every other change (hire, fire, invite, ask, reply, Done, mark, End, Delete) is refused with "the team is still being set
+up: try again in a moment", and only the setup's own hire passes (its token). A start that fails ends and deletes its
+room only while the room is still as the start left it: the room log holds nothing but the `create`, the start's own
+invite of its coordinator name and the plugin's writes of that name's kickoff doc, read before `rooms.end` and again
+after it (an ended room changes no more, so the second read decides). Anything else (a join or a change from core's
+room view) keeps the room, and the error says it was kept: a panel Hire landing before start's invite once made that
+invite fail and the cleanup delete the populated team, docs and log (review round 10).
 
 An ended team stays in the panel, read-only, until **Delete** (`ctx.rooms.delete`; Rooms keeps 50 ended rooms).
 
@@ -130,9 +181,16 @@ One panel, "Team", per window; state always marked with an icon or a word, never
   core's room view, which the person reaches from the tab strip).
 - Actions: New team, Hire…, Mark, End and export, Delete (ended teams).
 Core's room view (messages, docs, remove, pause and resume) is not duplicated.
+What the page has open for a team (a member menu, a form or confirm, a reply in flight) is bound to that team: any
+change of the selection (a click, the auto-select after the team is deleted or ended elsewhere) closes the menu and the
+forms, and every request names the room it was opened for, which the backend checks again (never the view's selection).
 
 ## 8. Restart, failures, security
 
+- The team records in memory follow Rooms, never storage: Rooms' state (a room ended, renamed, adopted or gone) and the
+  plugin's own changes are in memory first, then written; a failed write (the store's size limits) is logged and written
+  again by the next reconcile, so a full store never shows an ended team as live or keeps Delete from it. An End takes
+  Rooms' end time in its refresh, or a provisional one when that refresh fails, replaced by Rooms' on the next.
 - Team records survive restarts; Rooms restores members paused, the panel says so and resuming is the person's (core's
   room view). Metrics resume; the paused gap is not working time.
 - A member's text (questions, log entries, doc names) is untrusted: the panel renders it as text, never HTML; `ask`

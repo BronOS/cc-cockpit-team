@@ -9,7 +9,7 @@ const { createTeams, NOT_IN_TEAM } = require('../lib/teams.js')
 const { createQuestions } = require('../lib/questions.js')
 const { createCommands } = require('../lib/commands.js')
 const { createMetrics, bucketOf, leftWhy, addCost, SAVE_MS, CHECKPOINT_MS, POLL_SECONDS, LABEL_MAX, MARKS_MAX } = require('../lib/metrics.js')
-const { ACTION_MS, ACTIONS_MAX } = require('../lib/stats.js')
+const { ACTION_MS, ACTIONS_MAX, FORMER_MAX, foldFormer, statsOf, formatStats } = require('../lib/stats.js')
 
 /** Timers a test fires by hand (the throttled save). */
 function manualTimers() {
@@ -755,4 +755,62 @@ test('warn and go on: a failed save, a failed session list at start, a failed re
   assert.match(warned.join('\n'), /team metrics: refresh: refresh broke/)
   assert.equal((await teams.get(id)).metrics.actions.length, n + 1)
   await m2.stop()
+})
+
+test('former members are bounded: past FORMER_MAX the oldest are folded into the totals, the current ones stay', async () => {
+  const { f, metrics, id, teams, member } = await setup()
+  const total = FORMER_MAX + 40
+  for (let i = 0; i < total; i++) {
+    const name = `x${i}`
+    f.pushLog(id, { type: 'join', member: name, coordinator: false, via: 'open' })
+    f.pushLog(id, { type: 'send', from: name, to: 'lead', text: 'hi', delivery: [{ to: 'lead', path: 'delivered' }] })
+    f.pushLog(id, { type: 'doc-write', by: name, path: 'shared/a.md', bytes: 1 })
+    f.pushLog(id, { type: 'leave', member: name, why: 'removed' })
+  }
+  await metrics.poll()
+  await metrics.flush()
+  const rec = await teams.get(id)
+  const names = Object.keys(rec.metrics.members)
+  // lead and dev (current) plus the most recent FORMER_MAX of the former.
+  assert.equal(names.length, 2 + FORMER_MAX)
+  assert.ok(names.includes('lead') && names.includes('dev'))
+  assert.ok(!names.includes('x0') && names.includes(`x${total - 1}`))
+  const stats = statsOf(rec, f.clock.t)
+  // The totals still hold every member's counts, the folded ones included.
+  assert.equal(stats.totals.sent, total)
+  assert.equal(stats.totals.received, total)
+  assert.equal(stats.totals.docWrites, total)
+  assert.equal(stats.membersFolded, 40)
+  assert.match(formatStats(stats), /40 earlier former members/)
+  // Stored: the record stays small however many names came and went.
+  assert.ok(JSON.stringify(f.store.get(`team:${id}`)).length < 100_000)
+  assert.equal((await member('lead')).received, total)
+})
+
+test('foldFormer: oldest leave first, cost seen or unknown kept in the totals, a name with an open interval kept', () => {
+  const rec = { title: 't', createdAt: 0, marks: [], questions: [], metrics: { members: {}, logSeq: 0 } }
+  for (let i = 0; i < FORMER_MAX + 3; i++) {
+    rec.metrics.members[`m${i}`] = { workingMs: 10, waitingMs: 0, idleMs: 0, sent: 1, received: 0, docReads: 0, docWrites: 0, hiredAt: i, leftAt: 100 + i, leftWhy: 'fired' }
+  }
+  rec.metrics.members.m0.costUsd = 1.5
+  rec.metrics.members.cur = { workingMs: 5, hiredAt: 1 }
+  const before = statsOf(rec, 1000).totals
+  // 53 former, one protected: the excess is counted among the other 52.
+  assert.equal(foldFormer(rec, new Set(['m0'])), 2)
+  assert.ok('m0' in rec.metrics.members, 'protected')
+  assert.ok(!('m1' in rec.metrics.members) && !('m2' in rec.metrics.members) && 'm3' in rec.metrics.members)
+  assert.deepEqual(statsOf(rec, 1000).totals, before)
+  assert.equal(foldFormer(rec), 1)
+  assert.deepEqual(statsOf(rec, 1000).totals, before)
+  assert.equal(statsOf(rec, 1000).totals.costUsd, 1.5)
+  // Nothing more to fold.
+  assert.equal(foldFormer(rec), 0)
+})
+
+test('folded per-member question counts follow the members: a dropped question of a folded member leaves no entry', () => {
+  const { foldOut } = require('../lib/stats.js')
+  const rec = { title: 't', createdAt: 0, marks: [], questions: [], metrics: { members: { dev: { workingMs: 0 } }, logSeq: 0 } }
+  foldOut(rec, [{ id: 'q1', from: 'dev', askedAt: 1, answeredAt: 5 }, { id: 'q2', from: 'gone', askedAt: 2 }], [], 10)
+  assert.deepEqual(Object.keys(rec.metrics.folded.members), ['dev'])
+  assert.equal(rec.metrics.folded.asked, 2)
 })

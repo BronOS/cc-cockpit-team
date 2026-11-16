@@ -117,7 +117,7 @@ test("start: Rooms' title and cap refusals pass through as they are", async () =
   const { f } = project({ maxRooms: 1 })
   const bad = await f.run(['start', 'a "quoted" title'], { tabId: 'lead-tab' })
   assert.equal(bad.code, 1)
-  assert.match(bad.stderr, /^rooms\.create: title is 1-60 characters/)
+  assert.match(bad.stderr, /^rooms\.create: title may not contain quote or bracket characters/)
   assert.equal((await f.run(['start', 'One'], { tabId: 'lead-tab' })).code, undefined)
   f.emitSession({ tabId: 'other', status: 'waiting' })
   const cap = await f.run(['start', 'Two'], { tabId: 'other' })
@@ -135,6 +135,86 @@ test('start: an invite that fails ends and deletes the new room and drops its re
   assert.match(r.stderr, /at most 20 invites/)
   assert.equal(f.rooms.size, 0)
   assert.deepEqual([...f.store.keys()].filter((k) => k.startsWith('team:')), [])
+})
+
+test('start: an invite that main made but whose answer failed still cleans up (the start\'s own invite is not a change)', async () => {
+  const { f } = project()
+  const realInvite = f.ctx.rooms.invite
+  f.ctx.rooms.invite = async (...a) => {
+    await realInvite(...a)
+    throw new Error('rooms.invite: timed out')
+  }
+  const r = await f.run(['start', 'T'], { tabId: 'lead-tab' })
+  assert.equal(r.code, 1)
+  assert.doesNotMatch(r.stderr, /was kept/)
+  assert.equal(f.rooms.size, 0)
+})
+
+/** Hold the next `ctx.rooms[method]` call before it reaches the fake: `reached` answers its arguments. */
+function holdBefore(f, method) {
+  const real = f.ctx.rooms[method]
+  let armed = true
+  let release
+  let reached
+  const gate = new Promise((r) => (release = r))
+  const came = new Promise((r) => (reached = r))
+  f.ctx.rooms[method] = async (...a) => {
+    if (!armed) return real(...a)
+    armed = false
+    reached(a)
+    await gate
+    return real(...a)
+  }
+  return { reached: came, release }
+}
+
+test('start: a team still being set up refuses the panel\'s Hire, Invite, Mark and End; its start then completes (round 10)', async () => {
+  // The repro: a panel Hire of `lead` landed before start's invite, the invite was refused (lead is a member) and the
+  // cleanup deleted the room with the hired member in it.
+  const { f } = project()
+  const held = holdBefore(f, 'invite')
+  const pending = f.run(['start', 'T'], { tabId: 'lead-tab' })
+  const [roomId] = await held.reached
+  const { panel, ending } = host.instances()
+  for (const m of [
+    { type: 'hire', roomId, name: 'lead', kickoff: 'kick/dev.md' },
+    { type: 'invite', roomId, name: 'qa' },
+    { type: 'mark', roomId, label: 'm' },
+  ]) {
+    const before = f.posts.length
+    await panel.onMessage({ ...m, req: 1 }, { view: 'desktop' })
+    const res = f.posts.slice(before).find(([, x]) => x.type === 'result')
+    assert.equal(res[1].ok, false, m.type)
+    assert.match(res[1].error, /still being set up/, m.type)
+  }
+  await assert.rejects(ending.endTeam(roomId), /still being set up/)
+  held.release()
+  const r = await pending
+  assert.equal(r.code, undefined, r.stderr)
+  assert.equal(f.rooms.size, 1)
+  assert.equal(f.opens.length, 0)
+  f.join(codeOf(r.stdout), 'lead-tab')
+  // Set up: the team takes changes again.
+  const h = await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md'], { tabId: 'lead-tab' })
+  assert.equal(h.code, undefined, h.stderr)
+})
+
+test('start: a failed invite keeps a room someone else changed meanwhile (never deletes what is not its own)', async () => {
+  const { f } = project()
+  const realOpen = f.ctx.rooms.open
+  // A member arrives by a path the plugin's guard does not cover (core's room view), then the invite fails.
+  f.ctx.rooms.invite = async (id) => {
+    await realOpen(id, { name: 'other' })
+    throw new Error('rooms.invite: timed out')
+  }
+  const r = await f.run(['start', 'T'], { tabId: 'lead-tab' })
+  assert.equal(r.code, 1)
+  assert.match(r.stderr, /rooms\.invite: timed out/)
+  assert.match(r.stderr, /was kept/)
+  const [room] = f.rooms.values()
+  assert.equal(room.endedAt, undefined, 'not ended')
+  assert.ok(room.members.has('other'))
+  assert.ok(f.store.has(`team:${room.id}`))
 })
 
 test('start: usage errors exit 2', async () => {
@@ -435,6 +515,35 @@ test('start: a second start from a tab that has not joined gets a fresh invite f
   assert.match((await p.f.run(['start', 'Third'], { tabId: 'lead-tab' })).stderr, /already in a room/)
 })
 
+test('start: a transient failure while re-issuing keeps the started room; the retry re-issues, never a second room', async () => {
+  const p = project()
+  await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
+  for (const which of ['list', 'log', 'invite']) {
+    const saved = p.f.ctx.rooms[which]
+    p.f.ctx.rooms[which] = async () => {
+      throw new Error('plugin host call timed out')
+    }
+    const failed = await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
+    p.f.ctx.rooms[which] = saved
+    assert.equal(failed.code, 1, which)
+    assert.equal(failed.stderr, 'plugin host call timed out\n', which)
+    const retry = await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
+    assert.equal(retry.code, undefined, retry.stderr)
+    assert.match(retry.stdout, /already started team "Build it" and has not joined/, `after a failing ${which}`)
+    assert.equal(p.f.rooms.size, 1, `after a failing ${which}`)
+  }
+})
+
+test('start: a pending room that ended meanwhile is dropped, and the start makes a new team', async () => {
+  const p = project()
+  await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
+  await p.f.ctx.rooms.end([...p.f.rooms.keys()][0])
+  const second = await p.f.run(['start', 'Other'], { tabId: 'lead-tab' })
+  assert.equal(second.code, undefined, second.stderr)
+  assert.match(second.stdout, /team "Other" started/)
+  assert.equal(p.f.rooms.size, 2)
+})
+
 test('start: after the tab joined and left (the room empty, still live), a start makes a new team', async () => {
   const p = project()
   const first = await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
@@ -456,4 +565,247 @@ test('start: two at once from one tab make one room; the second is refused while
   assert.equal(p.f.rooms.size, 1)
   // Once it is done, a start from the tab is answered again (here: the invite of the room already started).
   assert.match((await p.f.run(['start', 'Two'], { tabId: 'lead-tab' })).stdout, /already started team "One"/)
+})
+
+// --- THE RULE (teams.js createTeamGuard): every change decides its preconditions inside its guard, after its awaits
+
+/**
+ * Hold the answer of the next call of `ctx.rooms.<method>` until `release()`: the call reads the host at once and its
+ * answer arrives late (a host call in flight while the team changes). Every other call passes. `reached` resolves when
+ * the held call has read its answer (the command is past its first checks and waiting on the host).
+ */
+function holdNext(f, method, skip = 0) {
+  const real = f.ctx.rooms[method]
+  let armed = true
+  let release
+  let reached
+  const gate = new Promise((r) => (release = r))
+  const came = new Promise((r) => (reached = r))
+  f.ctx.rooms[method] = async (...a) => {
+    if (!armed) return real(...a)
+    if (skip > 0) {
+      skip--
+      return real(...a)
+    }
+    armed = false
+    const answer = await real(...a)
+    reached()
+    await gate
+    return answer
+  }
+  return { reached: came, release }
+}
+
+/** A started team with a hired member `dev`. */
+async function withDev() {
+  const p = await started()
+  const r = await p.f.run(['hire', 'dev', '--kickoff', 'kick/dev.md'], p.lead)
+  assert.equal(r.code, undefined, r.stderr)
+  p.dev = { tabId: p.f.opens.find((o) => o.name === 'dev').tabId }
+  return p
+}
+
+test('hire: a second hire of a name with a member list read before the first finished is refused under the lock; the kickoff stays the first\'s', async () => {
+  const { f, dir, roomId } = await started()
+  fs.writeFileSync(path.join(dir, 'kick', 'other.md'), '# other\n')
+  const { hiring } = host.instances()
+  // The second hire's caller read the members before the first hire of `dev` finished (round 8: it seeded its own
+  // kickoff over the first member's until its open failed and put it back).
+  const stale = await f.ctx.rooms.members(roomId)
+  await hiring.hire(roomId, stale, 'dev', { kickoff: 'kick/dev.md' }, dir)
+  const puts = []
+  const put = f.ctx.rooms.docs.put
+  f.ctx.rooms.docs.put = async (...a) => {
+    puts.push(a[2])
+    return put(...a)
+  }
+  await assert.rejects(hiring.hire(roomId, stale, 'dev', { kickoff: 'kick/other.md' }, dir), /dev is already in the team/)
+  f.ctx.rooms.docs.put = put
+  assert.deepEqual(puts, [], 'nothing seeded, not even for a moment')
+  assert.equal(f.rooms.get(roomId).docs.get('members/dev/kickoff.md'), '# You are dev\n')
+  assert.equal(f.opens.filter((o) => o.name === 'dev').length, 1)
+})
+
+test('ask: a member lookup that finishes after an End stores nothing on the ended team (round 8)', async () => {
+  const { f, roomId, dev } = await withDev()
+  const { ending, teams } = host.instances()
+  const held = holdNext(f, 'members')
+  const asked = f.run(['ask', 'Which db?'], dev)
+  await held.reached
+  await ending.endTeam(roomId)
+  held.release()
+  const r = await asked
+  assert.equal(r.code, 1)
+  assert.equal(r.stderr, `${NOT_IN_TEAM}\n`)
+  assert.equal((await teams.get(roomId)).questions.length, 0)
+  assert.equal(f.notices.length, 0)
+})
+
+test('ask: an asker fired while its lookup was on the way stores nothing', async () => {
+  const { f, roomId, lead, dev } = await withDev()
+  const { teams } = host.instances()
+  const held = holdNext(f, 'members')
+  const asked = f.run(['ask', 'Which db?'], dev)
+  await held.reached
+  // The lookup read the list before the fire: the asker looks like a member until the guard reads it again.
+  assert.equal((await f.run(['fire', 'dev'], lead)).code, undefined)
+  held.release()
+  const r = await asked
+  assert.equal(r.code, 1)
+  assert.equal(r.stderr, `${NOT_IN_TEAM}\n`)
+  assert.equal((await teams.get(roomId)).questions.length, 0)
+})
+
+test('ask: a fire of the asker while the ask\'s own member read is answering is refused; the question is for a member (round 9)', async () => {
+  const { f, roomId, lead, dev } = await withDev()
+  const { teams } = host.instances()
+  // The second read is the ask's own, under the asker's name lock: it has answered (dev is in it), the answer is on
+  // its way back, and a fire of dev lands in between (round 9 stored the question for a member already gone).
+  const held = holdNext(f, 'members', 1)
+  const asked = f.run(['ask', 'Which db?'], dev)
+  await held.reached
+  const fired = await f.run(['fire', 'dev'], lead)
+  assert.equal(fired.code, 1)
+  assert.match(fired.stderr, /dev is asking a question: try again in a moment/)
+  held.release()
+  const r = await asked
+  assert.equal(r.code, undefined, r.stderr)
+  const rec = await teams.get(roomId)
+  assert.deepEqual(rec.questions.map((q) => q.from), ['dev'])
+  assert.ok((await f.ctx.rooms.members(roomId)).some((m) => m.name === 'dev' && m.tabId === dev.tabId), 'the asker is still in the team')
+  assert.equal(f.notices.length, 1)
+  // Released with the ask: the fire goes through now.
+  assert.equal((await f.run(['fire', 'dev'], lead)).code, undefined)
+})
+
+test('ask: the panel\'s Fire (hiring.fire) of the asker is refused the same way while the ask holds the name', async () => {
+  const { f, roomId, dev } = await withDev()
+  const { hiring, teams } = host.instances()
+  const held = holdNext(f, 'members', 1)
+  const asked = f.run(['ask', 'Which db?'], dev)
+  await held.reached
+  await assert.rejects(hiring.fire(roomId, 'dev'), (e) => e.code === 'ask-pending' && /dev is asking a question/.test(e.message))
+  held.release()
+  assert.equal((await asked).code, undefined)
+  assert.equal((await teams.get(roomId)).questions.length, 1)
+})
+
+test('ask: a hire of the asker\'s name in flight refuses the ask (the name is the hire\'s)', async () => {
+  const { f, roomId, lead } = await withDev()
+  const { hiring } = host.instances()
+  // dev is fired, then rehired; dev's old tab asks while the hire holds the name.
+  assert.equal((await f.run(['fire', 'dev'], lead)).code, undefined)
+  const open = f.ctx.rooms.open
+  let ask
+  f.ctx.rooms.open = async (...a) => {
+    ask = await hiring.names.hold(roomId, 'dev', 'ask', async () => 'ran').then((x) => x, (e) => e)
+    return open(...a)
+  }
+  assert.equal((await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md'], lead)).code, undefined)
+  f.ctx.rooms.open = open
+  assert.equal(ask.code, 'hire-pending')
+})
+
+test('mark: a coordinator fired while its mark waits on its member read is refused; nothing is marked', async () => {
+  const { f, roomId, lead } = await withDev()
+  const { teams } = host.instances()
+  assert.equal((await f.run(['hire', 'co', '--kickoff', 'kick/dev.md', '--coordinator'], lead)).code, undefined)
+  const co = { tabId: f.opens.find((o) => o.name === 'co').tabId }
+  // The first read is the command's coordinator check: co is fired after it, before the mark takes co's name.
+  const held = holdNext(f, 'members')
+  const marked = f.run(['mark', 'v1'], co)
+  await held.reached
+  assert.equal((await f.run(['fire', 'co'], lead)).code, undefined)
+  held.release()
+  const r = await marked
+  assert.equal(r.code, 1)
+  assert.equal(r.stderr, `${NOT_IN_TEAM}\n`)
+  assert.equal((await teams.get(roomId)).marks.length, 0)
+})
+
+test('mark: a fire of the marking coordinator while the mark holds its name is refused; the mark is a member\'s', async () => {
+  const { f, roomId, lead } = await withDev()
+  const { teams } = host.instances()
+  assert.equal((await f.run(['hire', 'co', '--kickoff', 'kick/dev.md', '--coordinator'], lead)).code, undefined)
+  const co = { tabId: f.opens.find((o) => o.name === 'co').tabId }
+  const held = holdNext(f, 'members', 1)
+  const marked = f.run(['mark', 'v1'], co)
+  await held.reached
+  const fired = await f.run(['fire', 'co'], lead)
+  assert.equal(fired.code, 1)
+  assert.match(fired.stderr, /co is setting a mark: try again in a moment/)
+  held.release()
+  assert.equal((await marked).code, undefined)
+  assert.deepEqual((await teams.get(roomId)).marks.map((m) => m.by), ['co'])
+  assert.ok((await f.ctx.rooms.members(roomId)).some((m) => m.name === 'co'))
+})
+
+test('mark: a member\'s mark is decided on the list read inside: a member that is not a coordinator there is refused', async () => {
+  const { f, roomId } = await withDev()
+  const { metrics, hiring, teams } = host.instances()
+  // dev is a plain member: a mark in its name, checked inside, is refused as not the coordinator.
+  const dev = (await f.ctx.rooms.members(roomId)).find((m) => m.name === 'dev')
+  await assert.rejects(metrics.mark(roomId, 'v1', 'dev', { names: hiring.names, tabId: dev.tabId }), (e) => e.code === 'not-coordinator')
+  assert.equal((await teams.get(roomId)).marks.length, 0)
+})
+
+test('done and reply: a Done takes no name (it acts on the question); a reply and an ask of one name run together', async () => {
+  const { f, roomId, dev } = await withDev()
+  const { questions, hiring } = host.instances()
+  assert.equal((await f.run(['ask', 'first?'], dev)).code, undefined)
+  // An ask by dev while an answer to dev is on its way: both only need dev to stay, so neither refuses the other.
+  let during
+  const send = f.ctx.rooms.send
+  f.ctx.rooms.send = async (...a) => {
+    f.ctx.rooms.send = send
+    during = await f.run(['ask', 'second?'], dev)
+    return send(...a)
+  }
+  await questions.reply(roomId, 'q1', 'yes')
+  assert.equal(during.code, undefined, during.stderr)
+  // A Done while a fire holds the asker's name: the Done does not touch the name, so it is not refused by it.
+  const ok = await hiring.names.hold(roomId, 'dev', 'fire', () => questions.done(roomId, 'q2'))
+  assert.equal(ok.id, 'q2')
+})
+
+for (const [what, argv, check] of [
+  ['hire', ['hire', 'qa', '--kickoff', 'kick/dev.md'], (f, roomId) => {
+    assert.equal(f.rooms.get(roomId).docs.has('members/qa/kickoff.md'), false)
+    assert.equal(f.opens.some((o) => o.name === 'qa'), false)
+  }],
+  ['fire', ['fire', 'dev'], () => {}],
+  ['invite', ['invite', 'qa'], (f, roomId) => assert.equal(f.rooms.get(roomId).log.some((e) => e.type === 'invite' && e.member === 'qa'), false)],
+  ['mark', ['mark', 'v1'], async (f, roomId) => assert.equal((await host.instances().teams.get(roomId)).marks.length, 0)],
+]) {
+  test(`${what}: a coordinator check that finishes after an End is refused inside the guard; nothing is written`, async () => {
+    const { f, roomId, lead } = await withDev()
+    const { ending } = host.instances()
+    const held = holdNext(f, 'members')
+    const pending = f.run(argv, lead)
+    await held.reached
+    await ending.endTeam(roomId)
+    const logAt = f.rooms.get(roomId).log.length
+    held.release()
+    const r = await pending
+    assert.equal(r.code, 1, r.stdout)
+    assert.match(r.stderr, /team has ended/)
+    assert.equal(f.rooms.get(roomId).log.length, logAt, 'nothing reached the room')
+    await check(f, roomId)
+  })
+}
+
+test('panel hire: a team ended while the panel read its members is refused inside the guard', async () => {
+  const { f, roomId } = await withDev()
+  const { ending, panel } = host.instances()
+  const held = holdNext(f, 'members')
+  const before = f.posts.length
+  const done = panel.onMessage({ type: 'hire', req: 1, roomId, name: 'qa', kickoff: 'kick/dev.md' }, { view: 'desktop' })
+  await held.reached
+  await ending.endTeam(roomId)
+  held.release()
+  await done
+  const res = f.posts.slice(before).find(([, x]) => x.type === 'result')
+  assert.equal(res[1].ok, false)
+  assert.match(res[1].error, /team has ended/)
+  assert.equal(f.opens.some((o) => o.name === 'qa'), false)
 })

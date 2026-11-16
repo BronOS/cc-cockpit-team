@@ -66,6 +66,14 @@ test('logMoved only when the sequence differs (the page then re-asks activity an
   assert.equal(V.logMoved(3, 4), true)
 })
 
+test('activityKey moves with the log and with the marks (a mark is no log entry)', () => {
+  const t = { logSeq: 3, marks: [] }
+  assert.equal(V.activityKey(t), V.activityKey({ logSeq: 3, marks: [] }))
+  assert.notEqual(V.activityKey(t), V.activityKey({ logSeq: 4, marks: [] }))
+  assert.notEqual(V.activityKey(t), V.activityKey({ logSeq: 3, marks: [{ at: 1, label: 'x', by: 'person' }] }))
+  assert.equal(V.activityKey(null), undefined)
+})
+
 test('describeEntry keeps a member\'s words as plain text', () => {
   assert.equal(V.describeEntry({ type: 'send', from: 'api', to: 'ui', text: '<b>hi</b>' }), 'api to ui: <b>hi</b>')
   assert.equal(V.describeEntry({ type: 'send', from: 'api', delivery: [{ to: 'a' }, { to: 'b' }] }), 'api to a, b')
@@ -268,7 +276,16 @@ function runPage() {
     Node: Node_,
     window: win,
     navigator: {},
-    ccPanel: { post: (m) => posts.push(m), onMessage: (f) => { onMessage = f }, onConnect: (f) => { onConnect = f } },
+    // As the real SDK (cc-cockpit src/sdk/panel-core.ts post): a message over 1 MiB as JSON throws, synchronously.
+    ccPanel: {
+      post: (m) => {
+        const text = JSON.stringify(m)
+        if (text.length > 1024 * 1024) throw new RangeError(`post: message of ${text.length} chars exceeds ${1024 * 1024}`)
+        posts.push(m)
+      },
+      onMessage: (f) => { onMessage = f },
+      onConnect: (f) => { onConnect = f },
+    },
     setTimeout: (f, ms) => { timers.push({ f, ms, active: true }); return timers.length },
     clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].active = false },
     setInterval: (f, ms) => { timers.push({ f, ms, interval: true, active: true }); return timers.length },
@@ -371,6 +388,10 @@ test('an ended team offers Delete, a live one End and export', () => {
   assert.match(p.root.text, /Delete…/)
   assert.doesNotMatch(p.root.text, /End and export/)
   assert.match(p.root.text, /ended/)
+  // Read-only: the open question is shown with no Reply or Done.
+  assert.match(p.root.text, /ok\?/)
+  assert.match(p.root.text, /Not answered before the team ended/)
+  assert.doesNotMatch(p.root.text, /Reply|Done/)
 })
 
 // ---- the protocol, with the page's real code ----
@@ -436,6 +457,20 @@ test('reply: sends the exact message, a refusal is shown and the box is usable a
   p.answer(p.posts.filter((m) => m.type === 'reply')[1], { ok: true, answers: [{ to: 'api', path: 'delivered' }] })
   await tick(p)
   assert.match(p.root.text, /Answer sent to api\./)
+})
+
+test('reply too large to post (ccPanel.post throws over 1 MiB): an error is shown and the box is usable again', async () => {
+  const p = start()
+  const box = p.find((e) => e.tag === 'textarea')[0]
+  typeInto(p, box, 'x'.repeat(1024 * 1024 + 10))
+  clickBtn(p, 'Reply')
+  await tick(p)
+  assert.equal(p.sent('reply').length, 0, 'nothing posted')
+  assert.match(p.root.text, /Too large to send/)
+  const again = p.find((e) => e.tag === 'textarea')[0]
+  assert.ok(!again.disabled, 'the reply controls are enabled again')
+  assert.ok(!p.button('Reply').attrs.disabled && !p.button('Reply').disabled)
+  assert.equal(again.value.length, 1024 * 1024 + 10, 'the draft is kept')
 })
 
 test('reply held (a paused room after a restart): the page says queued and why, never "sent"', async () => {
@@ -551,18 +586,67 @@ test('open sections: a log move re-asks the activity and the docs list, never a 
   assert.equal(p.sent('doc').length, 0)
 })
 
-test('a filter change during a load is asked again, not dropped, and the old answer is not shown', async () => {
+test('two reads of the same doc answered out of order: the newer read\'s text stays', async () => {
+  const p = start()
+  toggle(p, 'Docs')
+  p.answer(p.posts.find((m) => m.type === 'docs'), { ok: true, docs: [{ path: 'a.md', size: 3 }] })
+  await tick(p)
+  p.fire(p.find((e) => e.dataset.key === 'doc-a.md')[0], 'click')
+  p.fire(p.find((e) => e.dataset.key === 'doc-a.md')[0], 'click')
+  const [first, second] = p.sent('doc').length === 2 ? p.posts.filter((m) => m.type === 'doc') : []
+  assert.ok(first && second, 'two reads')
+  p.answer(second, { ok: true, text: 'newer text' })
+  await tick(p)
+  p.answer(first, { ok: true, text: 'older text' })
+  await tick(p)
+  assert.match(p.root.text, /newer text/)
+  assert.doesNotMatch(p.root.text, /older text/)
+})
+
+test('a new mark refreshes the open activity with no log move, and a closed one when it is opened again', async () => {
+  const p = start()
+  p.runTimeouts() // the first state's log refresh (nothing open)
+  toggle(p, 'Activity')
+  p.answer(p.posts.find((m) => m.type === 'activity'), { ok: true, entries: [entry(3)], before: null })
+  await tick(p)
+  p.runTimeouts()
+  assert.equal(p.sent('activity').length, 1)
+  // Marks live outside the Rooms log: the state's logSeq stays 3.
+  const st = teamState()
+  st.team.marks = [{ at: 40, label: 'design done', by: 'person' }]
+  p.send(st)
+  p.runTimeouts()
+  assert.equal(p.sent('activity').length, 2, 'asked again on the mark')
+  p.answer(p.posts.filter((m) => m.type === 'activity')[1], { ok: true, entries: [{ type: 'mark', at: 40, label: 'design done', by: 'person' }, entry(3)], before: null })
+  await tick(p)
+  // Closed: a second mark asks nothing, reopening asks once.
+  toggle(p, 'Activity', false)
+  st.team.marks = [...st.team.marks, { at: 50, label: 'api done', by: 'lead' }]
+  p.send(st)
+  p.runTimeouts()
+  assert.equal(p.sent('activity').length, 2, 'a closed section asks nothing')
+  toggle(p, 'Activity')
+  assert.equal(p.sent('activity').length, 3, 'reopened: asked for the new mark')
+  // Nothing changed since: closing and opening again asks nothing.
+  p.answer(p.posts.filter((m) => m.type === 'activity')[2], { ok: true, entries: [], before: null })
+  await tick(p)
+  toggle(p, 'Activity', false)
+  toggle(p, 'Activity')
+  assert.equal(p.sent('activity').length, 3)
+})
+
+test('a filter change during a load is asked at once, and the old answer is not shown', async () => {
   const p = start()
   toggle(p, 'Activity')
   const first = p.posts.find((m) => m.type === 'activity')
   const select = p.find((e) => e.tag === 'select')[0]
   select.value = 'api'
   p.fire(select, 'change', { target: select })
-  assert.equal(p.sent('activity').length, 1, 'dropped while one runs')
+  assert.deepEqual(p.sent('activity')[1], { type: 'activity', roomId: 'r1', member: 'api' }, 'not held behind the running one')
   p.answer(first, { ok: true, entries: [entry(3)], before: null })
   await tick(p)
   assert.doesNotMatch(p.root.text, /m3 left/)
-  assert.deepEqual(p.sent('activity')[1], { type: 'activity', roomId: 'r1', member: 'api' })
+  assert.equal(p.sent('activity').length, 2, 'the stale answer asks nothing more')
 })
 
 test('a log move during a load re-asks when it ends (the list is as of when it was asked)', async () => {
@@ -614,6 +698,33 @@ test('a refresh keeps the older pages that were loaded', async () => {
   for (const n of [11, 10, 9, 8, 7]) assert.match(text, new RegExp(`m${n} left`))
   assert.ok(text.indexOf('m11 left') < text.indexOf('m10 left') && text.indexOf('m9 left') < text.indexOf('m8 left'))
   assert.equal((text.match(/m10 left/g) || []).length, 1)
+})
+
+test('a filter change while "Load older" runs: the old filter\'s page is never shown or merged into the new one', async () => {
+  const p = start()
+  toggle(p, 'Activity')
+  p.answer(p.posts.find((m) => m.type === 'activity'), { ok: true, entries: [entry(10), entry(9)], before: { seq: 9, at: 90 } })
+  await tick(p)
+  clickBtn(p, 'Load older')
+  const older = p.posts.filter((m) => m.type === 'activity')[1]
+  const kind = p.find((e) => e.tag === 'select' && e.dataset.key === 'act-kind')[0]
+  kind.value = 'join'
+  p.fire(kind, 'change', { target: kind })
+  // The old filter's older page answers first, then the new filter's first page.
+  p.answer(older, { ok: true, entries: [entry(8), entry(7)], before: null })
+  await tick(p)
+  const asks = p.posts.filter((m) => m.type === 'activity')
+  const fresh = asks[asks.length - 1]
+  const { req, ...asked } = fresh
+  assert.deepEqual(asked, { type: 'activity', roomId: 'r1', kind: 'join' })
+  const join = (n) => ({ type: 'join', seq: n, at: n * 10, member: `j${n}` })
+  p.answer(fresh, { ok: true, entries: [join(6), join(5)], before: null })
+  await tick(p)
+  const text = p.root.text
+  for (const n of [10, 9, 8, 7]) assert.doesNotMatch(text, new RegExp(`m${n} left`), `m${n} is the old filter's`)
+  assert.match(text, /j6 joined/)
+  assert.match(text, /j5 joined/)
+  assert.equal(p.posts.filter((m) => m.type === 'activity').length, asks.length, 'no further ask')
 })
 
 test('a state that changed nothing renders nothing; focus and the scroll of the doc and the answer survive a render', async () => {
@@ -710,4 +821,122 @@ test('the menu gives the focus back to the actions button even after a render re
   p.fire(menu, 'keydown', { key: 'Escape' })
   assert.ok(p.document.activeElement.isConnected)
   assert.equal(p.document.activeElement.dataset.key, 'act-lead')
+})
+
+// ---- page state bound to a team: a team change (click, auto-select after a delete or an end) closes it ----
+
+/** Two live teams, r1 (selected, with a member menu) and r2 with a member of the same name and a question q1 too. */
+const twoTeams = () => {
+  const st = teamState()
+  st.teams.push({ roomId: 'r2', title: 'Other', createdAt: 0, paused: false, members: 2, waiting: 1, logSeq: 1 })
+  return st
+}
+const r2State = (teams) => ({
+  type: 'state', exportDir: '', teams,
+  team: {
+    roomId: 'r2', title: 'Other', createdAt: 0, paused: false, members: 2, waiting: 1, logSeq: 1,
+    members: [{ name: 'lead', coordinator: true, in: true, status: 'idle', held: 0, costUsd: 0, workingMs: 0, contextPercent: 0 },
+      { name: 'api', coordinator: false, in: true, status: 'idle', held: 0, costUsd: 0, workingMs: 0, contextPercent: 0 }],
+    questions: [{ id: 'q1', from: 'api', text: 'other team?', askedAt: 6 }],
+    marks: [], stats: null,
+  },
+})
+/** The ways the selection moves off r1: a click on r2, or a state where r1 is gone (deleted elsewhere). */
+const switches = {
+  click: (p) => p.fire(p.find((e) => e.tag === 'li' && e.dataset.key === 'team-r2')[0], 'click'),
+  'auto-select after a delete': (p, st) => p.send({ ...st, teams: st.teams.filter((t) => t.roomId !== 'r1'), team: null }),
+}
+
+for (const [how, move] of Object.entries(switches)) {
+  test(`a member menu is closed by a team change (${how}); its stale Fire never reaches the new team`, async () => {
+    const st = twoTeams()
+    const p = start(st)
+    const actions = p.find((e) => e.dataset.key === 'act-api')[0]
+    p.fire(actions, 'click', { currentTarget: actions })
+    const fire = p.menuHost.firstChild.children.find((b) => b.text === 'Fire…')
+    const show = p.menuHost.firstChild.children.find((b) => b.text === 'Show tab')
+    move(p, st)
+    assert.equal(p.menuHost.firstChild, null, 'the menu is closed')
+    p.send(r2State(st.teams.filter((t) => how === 'click' || t.roomId !== 'r1')))
+    // A click on an item of the old menu (held from before) does nothing: no form for r2's api, no post.
+    p.fire(fire, 'click')
+    p.fire(show, 'click')
+    assert.equal(p.button('Remove'), undefined)
+    assert.equal(p.sent('focus').length, 0)
+    assert.equal(p.sent('fire').length, 0)
+  })
+
+  test(`every team form and confirm is closed by a team change (${how}); New team stays`, async () => {
+    for (const [open, marker] of [['Hire…', 'Hire a member'], ['Mark', 'Add mark'], ['Copy invite…', 'Create invite'], ['End and export…', 'End team'], ['fire', 'Remove'], ['invite-result', 'Copy line']]) {
+      const st = twoTeams()
+      const p = start(st)
+      if (open === 'fire' || open === 'invite-result') {
+        const actions = p.find((e) => e.dataset.key === 'act-api')[0]
+        p.fire(actions, 'click', { currentTarget: actions })
+        p.fire(p.menuHost.firstChild.children.find((b) => b.text === (open === 'fire' ? 'Fire…' : 'Copy invite…')), 'click')
+        if (open === 'invite-result') {
+          typeInto(p, p.find((e) => e.tag === 'input')[0], 'qa')
+          clickBtn(p, 'Create invite')
+          p.answer(p.posts.find((m) => m.type === 'invite'), { ok: true, name: 'qa', line: 'ccc room join X' })
+        }
+      } else clickBtn(p, open)
+      await tick(p)
+      assert.match(p.root.text, new RegExp(marker), `${open} is open`)
+      move(p, st)
+      p.send(r2State(st.teams.filter((t) => how === 'click' || t.roomId !== 'r1')))
+      assert.doesNotMatch(p.root.text, new RegExp(marker), `${open} is closed (${how})`)
+    }
+    // The New team form is no team's: it stays.
+    const st = twoTeams()
+    const p = start(st)
+    clickBtn(p, 'New team')
+    move(p, st)
+    assert.match(p.root.text, /Start team/)
+  })
+
+  test(`a reply in flight on r1 does not disable r2's question of the same id (${how}); its answer is r1's`, async () => {
+    const st = twoTeams()
+    const p = start(st)
+    typeInto(p, p.find((e) => e.tag === 'textarea')[0], 'yes')
+    clickBtn(p, 'Reply')
+    assert.equal(p.sent('reply')[0].roomId, 'r1')
+    move(p, st)
+    p.send(r2State(st.teams.filter((t) => how === 'click' || t.roomId !== 'r1')))
+    assert.match(p.root.text, /other team\?/)
+    assert.ok(p.button('Reply') && !p.button('Reply').disabled, 'r2\'s Reply is usable')
+    assert.ok(!p.button('Done').disabled)
+    clickBtn(p, 'Done')
+    assert.deepEqual(p.sent('done'), [{ type: 'done', roomId: 'r2', id: 'q1' }])
+    // r1's answer arriving now is told as r1's reply; r2's question stays as it was.
+    p.answer(p.posts.find((m) => m.type === 'reply'), { ok: true, answers: [{ to: 'api', path: 'delivered' }] })
+    await tick(p)
+    assert.match(p.root.text, /Answer sent to api\./)
+    assert.match(p.root.text, /other team\?/)
+  })
+}
+
+test('the delete confirm closes when an end elsewhere auto-selects another team; a form posts the team it was opened for', async () => {
+  const st = twoTeams()
+  st.teams[0].endedAt = 9
+  st.team.endedAt = 9
+  // r2 is live, so it is picked first: the person selects the ended r1.
+  const p = start(st)
+  p.fire(p.find((e) => e.tag === 'li' && e.dataset.key === 'team-r1')[0], 'click')
+  p.send(st)
+  clickBtn(p, 'Delete…')
+  assert.match(p.root.text, /Delete team/)
+  // Deleted elsewhere: r1 is gone, r2 is picked.
+  p.send({ ...st, teams: st.teams.slice(1), team: null })
+  assert.doesNotMatch(p.root.text, /Delete team/)
+  // A confirm submitted on r1 whose answer comes after a switch: the post named r1.
+  const q = start(twoTeams())
+  const actions = q.find((e) => e.dataset.key === 'act-api')[0]
+  q.fire(actions, 'click', { currentTarget: actions })
+  q.fire(q.menuHost.firstChild.children.find((b) => b.text === 'Fire…'), 'click')
+  clickBtn(q, 'Remove')
+  switches.click(q)
+  assert.deepEqual(q.sent('fire'), [{ type: 'fire', roomId: 'r1', name: 'api' }])
+  q.answer(q.posts.find((m) => m.type === 'fire'), { ok: true, name: 'api' })
+  await tick(q)
+  assert.equal(q.sent('fire').length, 1)
 })

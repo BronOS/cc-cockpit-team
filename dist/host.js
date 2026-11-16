@@ -59,8 +59,9 @@ exports.activate = (ctx) => {
   metrics = createMetrics(ctx, teams)
   // End (with its export) and Delete: one instance too, its per-team lock refuses an End from the CLI and the panel at once.
   const ending = createEnding(ctx, teams, metrics)
-  // Hiring too: its per-name lock covers `ccc team hire` and the panel's Hire and New team.
-  const hiring = createHiring(ctx, metrics)
+  // Hiring too: its per-name lock covers `ccc team hire` and the panel's Hire and New team; the teams' export guard
+  // refuses a hire or a fire while a team is being exported and ended.
+  const hiring = createHiring(ctx, metrics, questions.names, teams.guard)
   instances = { teams, questions, metrics, ending, hiring }
   metrics.start().catch((err) => ctx.log.warn(`team metrics: ${err && err.message}`))
   disposers.push(ctx.cli.register('team', createCommands(ctx, teams, questions, metrics, ending, hiring)))

@@ -94,6 +94,17 @@
    */
   const logMoved = (prev, next) => prev !== next
 
+  /**
+   * What the activity list is "as of": the log position AND the team's marks. Marks live in the plugin's record, not
+   * in the Rooms log, so a mark moves no `logSeq`; keyed on the log alone, a new mark stayed out of a loaded list
+   * (open or opened again) until some other entry was logged. A string, compared with `!==` like `logSeq`.
+   */
+  const activityKey = (team) => {
+    if (!team) return undefined
+    const marks = Array.isArray(team.marks) ? team.marks.map((m) => (m ? [m.at, m.label, m.by] : null)) : []
+    return JSON.stringify([team.logSeq === undefined ? null : team.logSeq, marks])
+  }
+
   /** One line for a log entry (or mark) of the activity: plain text, a member's words included as text. */
   function describeEntry(e) {
     const to = (d) => (Array.isArray(d) ? d.map((x) => x && x.to).filter(Boolean).join(', ') : '')
@@ -227,7 +238,7 @@
   }
 
   const api = {
-    fmtDuration, fmtCost, fmtPercent, fmtTime, statusInfo, leftText, teamFlags, teamMeta, sortTeams, pickSelected, logMoved,
+    fmtDuration, fmtCost, fmtPercent, fmtTime, statusInfo, leftText, teamFlags, teamMeta, sortTeams, pickSelected, logMoved, activityKey,
     describeEntry, KINDS, docLabel, newTeamRequest, hireRequest, inviteRequest, replyRequest, replyOutcome, markRequest, endRequest,
     activityRequest, PING_SECONDS: 30,
   }
