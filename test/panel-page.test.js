@@ -97,6 +97,21 @@ test('hire form: name and kickoff are required, coordinator is a boolean', () =>
   assert.equal(V.hireRequest('r', { name: 'api', kickoff: 'k.md', coordinator: 'yes' }).message.coordinator, false)
 })
 
+test('reply outcome: delivered is "sent"; held says so, with why, as a warning', () => {
+  assert.deepEqual(V.replyOutcome('dev', [{ to: 'dev', path: 'delivered' }]), { text: 'Answer sent to dev.', held: false })
+  const paused = V.replyOutcome('dev', [{ to: 'dev', path: 'held', why: 'paused' }])
+  assert.equal(paused.held, true)
+  assert.match(paused.text, /^Answer queued for dev, not yet pointed out to it: the room is paused/)
+  for (const why of ['no-tab', 'typed', 'capped', 'draft', 'not-waiting']) {
+    const o = V.replyOutcome('dev', [{ to: 'dev', path: 'held', why }])
+    assert.equal(o.held, true, why)
+    assert.doesNotMatch(o.text, new RegExp(`: ${why}\\.$`), why)
+  }
+  // A reason this page does not know yet is shown as it is; no answers at all is the old "sent".
+  assert.match(V.replyOutcome('dev', [{ to: 'dev', path: 'held', why: 'new-why' }]).text, /: new-why\.$/)
+  assert.equal(V.replyOutcome('dev', undefined).held, false)
+})
+
 test('reply, mark, invite, end requests', () => {
   assert.match(V.replyRequest('r', 'q1', '  \n').error, /answer/)
   assert.deepEqual(V.replyRequest('r', 'q1', 'yes\n\nplease').message, { type: 'reply', roomId: 'r', id: 'q1', text: 'yes\n\nplease' })
@@ -418,9 +433,19 @@ test('reply: sends the exact message, a refusal is shown and the box is usable a
   assert.ok(!again.disabled)
   assert.equal(again.value, 'yes please', 'the draft is kept')
   clickBtn(p, 'Reply')
-  p.answer(p.posts.filter((m) => m.type === 'reply')[1], { ok: true })
+  p.answer(p.posts.filter((m) => m.type === 'reply')[1], { ok: true, answers: [{ to: 'api', path: 'delivered' }] })
   await tick(p)
   assert.match(p.root.text, /Answer sent to api\./)
+})
+
+test('reply held (a paused room after a restart): the page says queued and why, never "sent"', async () => {
+  const p = start()
+  typeInto(p, p.find((e) => e.tag === 'textarea')[0], 'yes please')
+  clickBtn(p, 'Reply')
+  p.answer(p.posts.find((m) => m.type === 'reply'), { ok: true, answers: [{ to: 'api', path: 'held', why: 'paused' }] })
+  await tick(p)
+  assert.match(p.root.text, /Answer queued for api, not yet pointed out to it: the room is paused/)
+  assert.doesNotMatch(p.root.text, /Answer sent/)
 })
 
 test('done, focus, fire and end send their exact messages and show the answer', async () => {

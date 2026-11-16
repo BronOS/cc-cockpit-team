@@ -27,7 +27,9 @@ end [--export <dir>]
 help
 ```
 
-- `start` (a Claude tab in no room) makes the team and prints a coordinator invite to run with `ccc room join <code>`.
+- `start` (a Claude tab in no room) makes the team and prints a coordinator invite to run with `ccc room join <code>`;
+  a second `start` before the tab joined prints the invite of the room already started again.
+- `fire` removes a member from the room; its tab stays open.
 - `hire`, `invite`, `fire`, `mark`, `end` are for coordinators; `ask`, `list`, `stats` for any member. The caller is
   known by main from its tab, never from an argument; a tab outside a team gets the same refusal for all but `start`
   and `help`.
@@ -59,27 +61,37 @@ no working time. Your active time is a proxy (question to reply, plus a fixed wi
 
 `ccc team end --export <dir>`, or the "Export folder" setting (`~/` and a project-relative folder are accepted), writes
 a new folder `<dir>/<team-slug>-<yyyymmdd-hhmm>/` before the room ends: `docs/`, `log.jsonl`, `metrics.json`,
-`metrics.md`, `questions.md`. An existing folder is refused, files are never written through a symlink, files are 0600
+`metrics.md`, `questions.md`. The log and the metrics are read to the moment of the export; the room's closing `end`
+entry (and the members leaving with it) comes after, so it is in neither. An existing folder is refused, files are never written through a symlink, files are 0600
 and folders 0700, and a failed export leaves the team running. From `ccc` the export has 20 s (a `ccc` call is cut at
 30 s); a team too big for that is ended from the panel.
 
 ## Limits
 
 - Not a boundary: `hire --kickoff` reads, and `end --export` writes, any path the calling tab names. A coordinator is
-  a Claude tab of the same OS user, which can do that anyway.
+  a Claude tab of the same OS user, which can do that anyway. The panel in the desktop window may name any path too;
+  the panel in a web access browser only paths inside the project folder (by real path), as the app's own file actions.
 - A question is at most 20000 characters; a team keeps at most 50 open questions and 100000 characters waiting;
   closed questions are shortened and eventually dropped from the record. Marks: 200 per team, label one line of at most
   200 characters.
 - Question answers are not stored by the plugin (only when they were answered); the answer text is in the room log.
+- Rooms keeps only 50 ended rooms: Delete a finished team to free one. The room caps default to 5 rooms per project
+  and 20 members per room; change them in Settings > General > Plugin limits.
 - Time is measured from polls (about 5 s) and checkpoints (60 s): an app crash can lose about a minute.
 
 ## Not verified
+
+Note: `dist/host.js` is hand-maintained source (there is no build step), not a bundle.
 
 Written against the Rooms API of cc-cockpit 0.19.1 and its source, with a fake `ctx` in the tests. It has not been run
 against the live app beyond loading (`ccc plugin list` shows it ok, `ccc team help` answers). The room log's field
 names the metrics read (`send`, `join`, `leave`, `doc-read`, `doc-write`, `end` and their members) come from the
 source and may not match every entry in practice; the panel, a real ask and reply, the export folder and a restart
-with a paused room have not been tried.
+with a paused room have not been tried. The panel page is tested against a hand-made DOM stub only, never in a real
+browser: focus, scroll and selection kept across a state, `<details>`, `<select>` and the clipboard, and the page under
+the app's CSP are unchecked, and so is `ccc plugin link`'s manifest check (the fields were checked by hand). The fake
+`ctx` is the tests' only picture of Rooms: refusal texts and log fields beyond `seq`, `at` and `type` are read from
+the source, not from a running app.
 
 Design: `docs/design.md`.
 

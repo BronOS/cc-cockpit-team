@@ -9,9 +9,9 @@ External review: auto
 - It is a **tool, not a flow** (design §0): no skills for leads or members, no roles, personas, phases or review loops.
   Every feature must pass "does every flow need it?".
 - Integrates only through the public plugin API (`ctx.rooms`, `ctx.sessions`, `ctx.cli`, `ctx.panels`, `ctx.storage`,
-  `ctx.notify`, settings); runs on the Rooms API already released in cc-cockpit 0.18.1. The core change of design §6
-  (configurable room caps) is a separate cc-cockpit plan and not a prerequisite: Rooms' refusal texts are passed
-  through as they are, so they name the new settings once the app carries them.
+  `ctx.notify`, settings); runs on the Rooms API of cc-cockpit 0.19.1, the first release that also carries the core change of
+  design §6 (configurable room caps, a separate cc-cockpit plan). Rooms' refusal texts are passed through as they are,
+  so they name the new settings.
 
 ## Context (from discovery)
 - New repo `~/Projects/cc-cockpit-team` (only `docs/design.md` so far). Sibling plugin repos (`cc-cockpit-autopilot`)
@@ -77,7 +77,7 @@ External review: auto
 - [x] stub `panels/team.html` and `skills/team-tool/SKILL.md` so the manifest is valid from the start
 - [x] `plugin.json`: id `bronos.team`, name Team, version 0.1.0, api 1, MIT, author Oleg Bronzov, the `team` CLI
       contribution (usage from design §2, stdin + stdinDash for `ask -`), one panel (`team`, right zone), one skill
-      (`team-tool`), a setting `exportDir` (string, default empty); description says "Needs cc-cockpit 0.18.1"
+      (`team-tool`), a setting `exportDir` (string, default empty); description says "Needs cc-cockpit 0.18.1" (now 0.19.1)
 - [x] `dist/host.js`: activate, refuse cleanly when `typeof ctx.rooms !== 'object'` (an older app), register the CLI
       handler with `help` working; `package.json` with `"test": "node --test test/"`
 - [x] `test/fake-ctx.js`: the fake ctx described in Testing Strategy, reusable by every later task
@@ -238,6 +238,9 @@ External review: auto
 **Manual verification**:
 - unlink the experimental plugin (`ccc plugin unlink bronos.team`), link this repo, run a small team in the dev app:
   panel states, notice on ask, reply delivery, export folder, restart with a paused room
+- the panel page in a real browser (known gap: its tests run against a DOM stub): two states in a row keep the
+  focused element, a textarea's value and the open doc's scroll; `<details>`, `<select>`, Copy invite's clipboard;
+  the page under the app's CSP; `ccc plugin link`'s manifest check
 
 - an e2e spec in cc-cockpit that links this plugin (start, hire two, ask, reply, end with export), if the live smoke
   shows anything the fake ctx missed; otherwise the live smoke stands in for it

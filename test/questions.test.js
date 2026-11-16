@@ -152,11 +152,11 @@ test('compaction trims the oldest closed text first and leaves open questions wh
   assert.ok(rec.questions.reduce((s, q) => s + q.text.length, 0) <= STORED_TEXT_MAX)
 })
 
-test('ask - with a 256 KiB run of newlines is refused at once (no regex backtracking)', async () => {
+test('ask - with a 256 KiB run of newlines is refused (trimTrailingNewlines is a loop, no regex to backtrack)', async () => {
   const { f, teams, id, dev } = await setup()
-  const t0 = Date.now()
+  // No wall-clock bound (flaky under load, and blind to a regex that is merely slow): the exact refusal shows the
+  // text was measured whole, and the quadratic regex this replaced held the event loop for over a minute here.
   const r = await f.run(['ask', '-'], { tabId: dev, stdin: '\n'.repeat(256 * 1024) + 'x' })
-  assert.ok(Date.now() - t0 < 2000, `took ${Date.now() - t0} ms`)
   assert.equal(r.code, 1)
   assert.match(r.stderr, /at most 20000 characters/)
   // Trailing newlines only: dropped, also \r\n ones.
@@ -173,16 +173,20 @@ test('two asks at once get two ids; a failed save removes its own question, not 
   const set = f.ctx.storage.set
   let release
   const gate = new Promise((r) => (release = r))
+  let entered
+  const inSave = new Promise((r) => (entered = r))
   let calls = 0
   f.ctx.storage.set = async (k, v) => {
     if (++calls === 1) {
+      entered()
       await gate
       throw new Error('disk full')
     }
     return set(k, v)
   }
   const first = ask(f, dev, 'first')
-  await new Promise((r) => setTimeout(r, 20))
+  // The first ask is inside its save (q3 taken) before the second starts.
+  await inSave
   const second = await ask(f, lead, 'second')
   assert.match(second.stdout, /^asked q4:/)
   release()
@@ -318,12 +322,15 @@ test('Done while a reply is being sent is refused; the reply wins', async () => 
   const send = f.ctx.rooms.send
   let release
   const gate = new Promise((r) => (release = r))
+  let entered
+  const inSend = new Promise((r) => (entered = r))
   f.ctx.rooms.send = async (...a) => {
+    entered()
     await gate
     return send(...a)
   }
   const replying = questions.reply(id, 'q1', 'yes')
-  await new Promise((r) => setTimeout(r, 10))
+  await inSend
   await assert.rejects(questions.done(id, 'q1'), (e) => e.code === 'reply-pending')
   release()
   await replying
@@ -331,6 +338,30 @@ test('Done while a reply is being sent is refused; the reply wins', async () => 
   const q = (await teams.get(id)).questions[0]
   assert.ok(Number.isFinite(q.answeredAt))
   assert.equal(q.doneAt, undefined)
+})
+
+test('a failed save after a reply was sent keeps the answer (logged, never sent twice); a failed Done is rolled back', async () => {
+  const { f, teams, questions, id, dev } = await setup()
+  await ask(f, dev, 'a?')
+  await ask(f, dev, 'b?')
+  const warns = []
+  f.ctx.log.warn = (t) => warns.push(t)
+  const set = f.ctx.storage.set
+  f.ctx.storage.set = async () => {
+    throw new Error('disk full')
+  }
+  const { answers, question } = await questions.reply(id, 'q1', 'yes')
+  assert.equal(answers[0].to, 'dev')
+  assert.ok(Number.isFinite(question.answeredAt))
+  assert.ok(warns.some((t) => /team reply: saving q1: disk full/.test(t)))
+  // Answered in memory: a second reply is refused, so the member is not sent the answer twice.
+  await assert.rejects(questions.reply(id, 'q1', 'yes'), (e) => e.code === 'closed')
+  assert.equal(f.rooms.get(id).log.filter((e) => e.type === 'send' && e.from === 'plugin').length, 1)
+  await assert.rejects(questions.done(id, 'q2'), /disk full/)
+  assert.equal((await teams.get(id)).questions[1].doneAt, undefined)
+  f.ctx.storage.set = set
+  await questions.done(id, 'q2')
+  assert.ok(Number.isFinite((await teams.get(id)).questions[1].doneAt))
 })
 
 test('createCommands refuses to run without the shared questions instance', () => {

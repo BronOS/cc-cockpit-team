@@ -31,6 +31,8 @@ const DOC_PART_RE = /^[A-Za-z0-9._-]+$/
 const DOC_MAX = 256 * 1024
 const ROOM_DOCS_MAX = 20 * 1024 * 1024
 const SEND_MAX = 20000
+const STORAGE_VALUE_MAX = 1024 * 1024
+const STORAGE_TOTAL_MAX = 16 * 1024 * 1024
 const PANEL_MESSAGE_MAX = 1024 * 1024
 const VIEW_ID_RE = /^web:[1-9][0-9]{0,11}$/
 const LOG_MAX = 1000
@@ -356,9 +358,27 @@ function fakeCtx(opts = {}) {
       return () => settingsListeners.delete(fn)
     },
     log: { info() {}, warn() {}, error() {} },
+    // As the real store (cc-cockpit src/shared/plugin-storage.ts): a value is kept as its JSON text (so `undefined`
+    // fields vanish and a Date becomes a string, as on disk), at most 1 MiB of it, and 16 MiB of keys plus values in
+    // all; a value that is not JSON or passes a cap is a rejection and changes nothing.
     storage: {
-      get: async (k) => (store.has(k) ? structuredClone(store.get(k)) : undefined),
-      set: async (k, v) => void store.set(k, structuredClone(v)),
+      get: async (k) => (store.has(k) ? JSON.parse(JSON.stringify(store.get(k))) : undefined),
+      async set(k, v) {
+        if (typeof k !== 'string' || k === '') throw new TypeError('storage key must be a non-empty string')
+        if (k.length > 200) throw new RangeError('storage key is longer than 200 characters')
+        let text
+        try {
+          text = JSON.stringify(v)
+        } catch {
+          text = undefined
+        }
+        if (text === undefined) throw new TypeError('storage value must be JSON')
+        if (text.length > STORAGE_VALUE_MAX) throw new RangeError(`storage value is larger than ${STORAGE_VALUE_MAX} characters`)
+        let total = k.length + text.length
+        for (const [key, val] of store) if (key !== k) total += key.length + JSON.stringify(val).length
+        if (total > STORAGE_TOTAL_MAX) throw new RangeError(`storage would exceed ${STORAGE_TOTAL_MAX} characters in total`)
+        store.set(k, JSON.parse(text))
+      },
       delete: async (k) => void store.delete(k),
       keys: async () => [...store.keys()],
     },

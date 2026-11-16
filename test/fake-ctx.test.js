@@ -198,3 +198,17 @@ test('rooms.end on an ended room resolves; an ended room keeps its members (unbo
   assert.equal(f.sessions.get(tabId).room, undefined)
   await assert.rejects(f.ctx.rooms.send(id, 'dev', 'hi'), /rooms\.send/)
 })
+
+test('storage as the real one: a JSON round trip, 1 MiB a value, 16 MiB in all; a refused set changes nothing', async () => {
+  const { ctx } = fakeCtx()
+  await ctx.storage.set('a', { x: undefined, d: new Date(0), n: 1 })
+  assert.deepEqual(await ctx.storage.get('a'), { d: '1970-01-01T00:00:00.000Z', n: 1 })
+  await assert.rejects(ctx.storage.set('big', 'x'.repeat(1024 * 1024)), RangeError)
+  await assert.rejects(ctx.storage.set('f', () => 1), TypeError)
+  assert.equal(await ctx.storage.get('big'), undefined)
+  for (let i = 0; i < 16; i++) await ctx.storage.set(`k${i}`, 'x'.repeat(1024 * 1024 - 10))
+  await assert.rejects(ctx.storage.set('k16', 'x'.repeat(1024 * 1024 - 10)), /16777216 characters in total/)
+  // Replacing a value counts its new size only.
+  await ctx.storage.set('k0', 'small')
+  assert.equal(await ctx.storage.get('k0'), 'small')
+})

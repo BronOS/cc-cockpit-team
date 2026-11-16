@@ -318,7 +318,10 @@
     replying.delete(q.id)
     if (res.ok) {
       drafts.delete(key)
-      say(`Answer sent to ${q.from}.`, false)
+      // A held answer is in the member's queue but nobody pointed it there (a paused room after a restart, a typed
+      // tab): said as such, shown like a warning so it is not read as "sent".
+      const out = V.replyOutcome(q.from, res.answers)
+      say(out.text, out.held)
     } else say(res.error, true)
   }
 

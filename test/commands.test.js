@@ -434,3 +434,26 @@ test('start: a second start from a tab that has not joined gets a fresh invite f
   p.f.join(codeOf(second.stdout), 'lead-tab')
   assert.match((await p.f.run(['start', 'Third'], { tabId: 'lead-tab' })).stderr, /already in a room/)
 })
+
+test('start: after the tab joined and left (the room empty, still live), a start makes a new team', async () => {
+  const p = project()
+  const first = await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
+  p.f.join(codeOf(first.stdout), 'lead-tab')
+  const roomId = [...p.f.rooms.keys()][0]
+  await p.f.ctx.rooms.remove(roomId, 'lead')
+  const second = await p.f.run(['start', 'Other', '--as', 'boss'], { tabId: 'lead-tab' })
+  assert.equal(second.code, undefined, second.stderr)
+  assert.match(second.stdout, /team "Other" started\. .* as boss \(coordinator\)/)
+  assert.equal(p.f.rooms.size, 2)
+})
+
+test('start: two at once from one tab make one room; the second is refused while the first runs', async () => {
+  const p = project()
+  const [a, b] = await Promise.all([p.f.run(['start', 'One'], { tabId: 'lead-tab' }), p.f.run(['start', 'Two'], { tabId: 'lead-tab' })])
+  assert.equal(a.code, undefined, a.stderr)
+  assert.equal(b.code, 1)
+  assert.match(b.stderr, /already starting a team/)
+  assert.equal(p.f.rooms.size, 1)
+  // Once it is done, a start from the tab is answered again (here: the invite of the room already started).
+  assert.match((await p.f.run(['start', 'Two'], { tabId: 'lead-tab' })).stdout, /already started team "One"/)
+})

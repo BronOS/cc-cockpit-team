@@ -111,3 +111,60 @@ test('flow: ask, reply, mark, stats, end with export', async (t) => {
   assert.match(fs.readFileSync(path.join(folder, 'questions.md'), 'utf8'), /## q1 from dev: answered\n[\s\S]*> Which db\?/)
   assert.ok(f.rooms.get(roomId).endedAt !== undefined)
 })
+
+test('flow: two teams in one window, interleaved, with a plugin restart in the middle', async (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'team-flow3-')))
+  t.after(() => {
+    host.deactivate()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  fs.writeFileSync(path.join(dir, 'dev.md'), '# Dev\n')
+  const f = fakeCtx({ projectDir: dir })
+  host.activate(f.ctx)
+  const teamsOf = {}
+  for (const [key, title] of [['a', 'Team A'], ['b', 'Team B']]) {
+    const lead = { tabId: `lead-${key}`, cwd: dir }
+    f.emitSession({ tabId: lead.tabId, status: 'waiting' })
+    const start = await f.run(['start', title], lead)
+    f.join(/ccc room join (\S+)/.exec(start.stdout)[1], lead.tabId)
+    assert.equal((await f.run(['hire', 'dev', '--kickoff', 'dev.md'], lead)).code, undefined)
+    const dev = { tabId: f.opens.filter((o) => o.via === 'rooms.open').at(-1).tabId }
+    const roomId = [...f.rooms.keys()].at(-1)
+    teamsOf[key] = { lead, dev, roomId }
+  }
+  const { a, b } = teamsOf
+  // Each dev asks in its own team; the ids are per team.
+  assert.match((await f.run(['ask', 'A one?'], a.dev)).stdout, /asked q1/)
+  assert.match((await f.run(['ask', 'B one?'], b.dev)).stdout, /asked q1/)
+  assert.match((await f.run(['ask', 'A two?'], a.dev)).stdout, /asked q2/)
+  await host.instances().questions.reply(a.roomId, 'q1', 'yes')
+  assert.equal((await f.run(['mark', 'a-phase'], a.lead)).code, undefined)
+
+  // The plugin restarts (a reload): records and questions come back from storage, nothing crosses teams.
+  await host.deactivate()
+  host.activate(f.ctx)
+  const { questions, teams } = host.instances()
+  await teams.load()
+  assert.deepEqual((await questions.open(a.roomId)).map((q) => q.text), ['A two?'])
+  assert.deepEqual((await questions.open(b.roomId)).map((q) => q.text), ['B one?'])
+  await questions.reply(b.roomId, 'q1', 'no')
+  assert.equal((await f.run(['mark', 'b-phase'], b.lead)).code, undefined)
+  assert.match((await f.run(['ask', 'A three?'], a.dev)).stdout, /asked q3/)
+
+  const sa = JSON.parse((await f.run(['stats', '--json'], a.dev)).stdout)
+  const sb = JSON.parse((await f.run(['stats', '--json'], b.dev)).stdout)
+  assert.deepEqual([sa.title, sa.marks.map((m) => m.label), sa.questions.asked, sa.questions.answered], ['Team A', ['a-phase'], 3, 1])
+  assert.deepEqual([sb.title, sb.marks.map((m) => m.label), sb.questions.asked, sb.questions.answered], ['Team B', ['b-phase'], 1, 1])
+  // The replies went to each team's own dev only.
+  const plugin = (id) => f.rooms.get(id).log.filter((e) => e.type === 'send' && e.from === 'plugin').map((e) => e.text)
+  assert.equal(plugin(a.roomId).length, 1)
+  assert.match(plugin(a.roomId)[0], /q1:\nyes$|q1:[\s\S]*yes/)
+  assert.equal(plugin(b.roomId).length, 1)
+  assert.match(plugin(b.roomId)[0], /no$/)
+
+  // Ending A leaves B running and reachable.
+  assert.equal((await f.run(['end'], a.lead)).code, undefined)
+  assert.notEqual(f.rooms.get(a.roomId).endedAt, undefined)
+  assert.equal(f.rooms.get(b.roomId).endedAt, undefined)
+  assert.equal(JSON.parse((await f.run(['list', '--json'], b.dev)).stdout).title, 'Team B')
+})

@@ -27,8 +27,8 @@ Decisions taken in the brainstorm:
 Repo `~/Projects/cc-cockpit-team` (GitHub `BronOS/cc-cockpit-team`), id `bronos.team`, MIT. A plugin host
 (`dist/host.js`, plain JavaScript like the reviewer and files plugins), one panel (`panels/team.html`), one CLI command
 (`ccc team`), one reference skill (`team-tool`: what `ccc team` does, never how to run a team). Public API only:
-`ctx.rooms`, `ctx.sessions`, `ctx.cli`, `ctx.panels`, `ctx.storage`, `ctx.notify`, settings. Needs the app release that
-carries §6.
+`ctx.rooms`, `ctx.sessions`, `ctx.cli`, `ctx.panels`, `ctx.storage`, `ctx.notify`, settings. Needs cc-cockpit 0.19.1 (the
+caps of §6 are in the 0.19.0 tag, whose release failed; first released as 0.19.1).
 
 A **team is one room** of this plugin in this window. The plugin's own record per team (in `ctx.storage`, per project):
 `{ roomId, title, createdAt, endedAt?, exportDir?, marks[], questions[], metrics }`. Messages, docs, membership and the
@@ -107,7 +107,7 @@ and keeps running instead of ending unseen after exit 124; the panel has no budg
 
 An ended team stays in the panel, read-only, until **Delete** (`ctx.rooms.delete`; Rooms keeps 50 ended rooms).
 
-## 6. Core change (cc-cockpit, next app release)
+## 6. Core change (cc-cockpit 0.19.1; tagged 0.19.0, whose release failed)
 
 - Two more plugin limits beside `opensPerMinute` and the send caps (`src/shared/plugin-limits.ts`, global value plus
   per-plugin override, hard ceiling): `roomsPerProject` (default 5, ceiling 20) and `membersPerRoom` (default 20,
@@ -139,6 +139,9 @@ Core's room view (messages, docs, remove, pause and resume) is not duplicated.
   text is capped by Rooms' message rules before it is stored.
 - `hire --kickoff` reads, and `end --export` writes, any path the calling tab names. That is not a boundary and is
   documented as such: a coordinator is a Claude tab of the same OS user, which can read and write those files anyway.
+  The panel's paths (New team's and Hire's kickoff and folder, End's export folder) are the same from the desktop
+  window; from a web access browser view (another device the person paired) they must be inside the project folder by
+  their real path, as the app's own `ctx.files` actions for such a view.
 - The tool never reads or acts on a kickoff's meaning, never runs commands for members, and never widens what Rooms
   allows: identities, docs access and caps are main's.
 

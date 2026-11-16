@@ -710,3 +710,49 @@ test('the CLI: stats from a non-member and a foreign tab, mark with no or a bad 
   assert.equal(r.code, 1)
   assert.match(r.stderr, /metrics are not running/)
 })
+
+test('warn and go on: a failed save, a failed session list at start, a failed refresh in a panel action', async () => {
+  const { f, teams, metrics, make, id, dev, member } = await setup()
+  const warned = []
+  f.ctx.log.warn = (m) => warned.push(m)
+  // A save storage refuses: logged, the flush resolves; the next change saves again.
+  f.emitSession({ tabId: dev, status: 'working' })
+  f.advance(1000)
+  f.emitSession({ tabId: dev, status: 'waiting' })
+  const set = f.ctx.storage.set
+  f.ctx.storage.set = async () => {
+    throw new Error('disk full')
+  }
+  await metrics.flush()
+  assert.match(warned.join('\n'), new RegExp(`team metrics: save ${id}: disk full`))
+  f.ctx.storage.set = set
+  f.advance(1000)
+  f.emitSession({ tabId: dev, status: 'working' })
+  await metrics.flush()
+  assert.equal(f.store.get(`team:${id}`).metrics.members.dev.workingMs, (await member('dev')).workingMs)
+  assert.ok((await member('dev')).workingMs >= 1000)
+  await metrics.stop()
+  // A session list failing at start: logged, and the first poll still runs (it reads the log).
+  const list = f.ctx.sessions.list
+  f.ctx.sessions.list = async () => {
+    throw new Error('sessions gone')
+  }
+  const m2 = make(teams)
+  f.pushLog(id, { type: 'send', from: 'dev', to: 'lead', text: 'x', delivery: [{ to: 'lead', path: 'delivered' }] })
+  const sentBefore = (await member('dev')).sent
+  await m2.start()
+  f.ctx.sessions.list = list
+  assert.match(warned.join('\n'), /team metrics: sessions: sessions gone/)
+  assert.equal((await member('dev')).sent, sentBefore + 1)
+  // A failed refresh in a panel action: the action still counts.
+  const refresh = teams.refresh
+  teams.refresh = async () => {
+    throw new Error('refresh broke')
+  }
+  const n = ((await teams.get(id)).metrics.actions || []).length
+  await m2.panelAction(id)
+  teams.refresh = refresh
+  assert.match(warned.join('\n'), /team metrics: refresh: refresh broke/)
+  assert.equal((await teams.get(id)).metrics.actions.length, n + 1)
+  await m2.stop()
+})

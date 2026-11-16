@@ -1,7 +1,7 @@
 'use strict'
 // Team for cc-cockpit: a tool for running a team (one Rooms room) of Claude tabs. Not a flow: no roles,
-// phases or personas (docs/design.md §0). This file only wires the pieces; each later module owns one
-// concern (lib/teams.js, lib/commands.js, ...).
+// phases or personas (docs/design.md §0). This file only wires the pieces; each module in lib/ owns one
+// concern.
 
 const { createTeams } = require('../lib/teams.js')
 const { createQuestions } = require('../lib/questions.js')

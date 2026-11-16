@@ -144,5 +144,8 @@ test('statsOf reads stored data defensively: null questions, marks, members and 
   assert.equal(s.personActiveMs, 1000)
   assert.deepEqual(s.marks.map((m) => m.label), ['one'])
   assert.deepEqual(s.members.map((m) => [m.name, m.questionsAsked]), [['dev', 1]])
+  // Counters the stored member lacks (an older record, a hand edit) are 0, never undefined in the text.
+  assert.deepEqual([s.members[0].sent, s.members[0].docWrites, s.members[0].waitingMs, s.members[0].workingMs], [0, 0, 0, 1])
   assert.match(formatStats(s), /start -> one/)
+  assert.doesNotMatch(formatStats(s), /undefined|NaN/)
 })

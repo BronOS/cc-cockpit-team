@@ -321,3 +321,23 @@ test('a failed load is retried by the next call', async () => {
   f.ctx.rooms.list = realList
   assert.equal((await teams.get(id)).title, 'T')
 })
+
+test('a failed delete of a gone room\'s record is logged and retried: the next refresh drops it', async () => {
+  const { f, teams, id } = await setup()
+  await teams.load()
+  await f.ctx.rooms.end(id)
+  await f.ctx.rooms.delete(id)
+  const warned = []
+  f.ctx.log.warn = (m) => warned.push(m)
+  const del = f.ctx.storage.delete
+  f.ctx.storage.delete = async () => {
+    throw new Error('disk busy')
+  }
+  await teams.refresh()
+  assert.match(warned.join('\n'), /drop/)
+  assert.ok(await teams.get(id), 'kept while its key could not be deleted')
+  f.ctx.storage.delete = del
+  await teams.refresh()
+  assert.equal(await teams.get(id), undefined)
+  assert.equal(f.store.has(KEY_PREFIX + id), false)
+})

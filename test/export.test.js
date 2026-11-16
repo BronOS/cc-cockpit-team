@@ -6,7 +6,7 @@ const os = require('node:os')
 const path = require('node:path')
 const host = require('../dist/host.js')
 const { fakeCtx } = require('./fake-ctx')
-const { createEnding, exportTeam, checkDocPath, slugOf, stampOf } = require('../lib/export.js')
+const { createEnding, exportTeam, checkDocPath, docClash, slugOf, stampOf } = require('../lib/export.js')
 
 test.afterEach(() => host.deactivate())
 
@@ -141,6 +141,18 @@ test('end --export: the full folder, then the room ends', async () => {
   assert.match(q, /> Second \| one/)
 })
 
+test('a message sent right before the end is in the export\'s metrics as in its log (the log is drained first)', async () => {
+  const { f, out, lead, roomId } = await team()
+  await host.instances().metrics.poll()
+  // As Rooms logs a member's own send: no poll ran since.
+  f.pushLog(roomId, { type: 'send', from: 'lead', to: 'dev', text: 'last words', delivery: [{ to: 'dev', path: 'delivered' }] })
+  const r = await f.run(['end', '--export', out], lead)
+  assert.equal(r.code, undefined, r.stderr)
+  const m = JSON.parse(fs.readFileSync(path.join(only(out), 'metrics.json'), 'utf8'))
+  assert.equal(m.members.find((x) => x.name === 'lead').sent, 1)
+  assert.equal(m.members.find((x) => x.name === 'dev').received, 1)
+})
+
 test('end without --export uses the Export folder setting; none when both are empty', async () => {
   {
     const { f, out, lead, roomId } = await team()
@@ -235,6 +247,23 @@ test('a bad doc path refuses the export before anything is written', async () =>
   assert.match(r.stderr, /export failed, the team is still running: a doc path Rooms should not have given/)
   assert.deepEqual(fs.readdirSync(out), [])
   assert.equal(f.rooms.get(roomId).endedAt, undefined)
+})
+
+test('docs that cannot both be files (case, a doc that is a folder) refuse the export before anything is written', async () => {
+  assert.equal(docClash(['shared/a.md', 'shared/b/a.md', 'members/dev/kickoff.md']), null)
+  assert.deepEqual(docClash(['shared/Notes.md', 'shared/notes.md']), ['shared/Notes.md', 'shared/notes.md'])
+  assert.deepEqual(docClash(['shared/a', 'shared/a/b']), ['shared/a', 'shared/a/b'])
+  assert.deepEqual(docClash(['shared/A/b', 'shared/a']), ['shared/a', 'shared/A/b'])
+  for (const pair of [['shared/Notes.md', 'shared/notes.md'], ['shared/a', 'shared/a/b']]) {
+    const { f, out, lead, roomId } = await team()
+    for (const p of pair) f.rooms.get(roomId).docs.set(p, 'x')
+    const r = await f.run(['end', '--export', out], lead)
+    assert.equal(r.code, 1)
+    assert.match(r.stderr, new RegExp(`export failed, the team is still running: the docs ${pair[0]} and ${pair[1]} cannot both be written`))
+    assert.deepEqual(fs.readdirSync(out), [])
+    assert.equal(f.rooms.get(roomId).endedAt, undefined)
+    host.deactivate()
+  }
 })
 
 test('a missing folder, a file as the folder and a failing Rooms call keep the room; partial output is removed', async () => {
@@ -384,6 +413,39 @@ test('a folder swapped for a link before the cleanup: the cleanup removes nothin
   assert.match(r.stderr, /export failed, the team is still running: .*EEXIST/)
   assert.deepEqual(fs.readdirSync(victimDir), ['a.md'])
   assert.equal(fs.readFileSync(path.join(victimDir, 'a.md'), 'utf8'), 'original')
+  assert.equal(f.rooms.get(roomId).endedAt, undefined)
+})
+
+test('a file of the export swapped for a link before the cleanup: the link is left, its target untouched', async () => {
+  const { f, out, lead, roomId } = await team()
+  await f.ctx.rooms.docs.put(roomId, 'shared/a.md', 'mine')
+  const victimDir = tmp('team-victim-')
+  const victim = path.join(victimDir, 'v.md')
+  fs.writeFileSync(victim, 'original')
+  const warned = []
+  f.ctx.log.warn = (m) => warned.push(m)
+  const log = f.ctx.rooms.log
+  f.ctx.rooms.log = async (...a) => {
+    const names = fs.readdirSync(out)
+    if (names.length === 1) {
+      const folder = path.join(out, names[0])
+      const file = path.join(folder, 'docs/shared/a.md')
+      if (fs.existsSync(file) && !fs.lstatSync(file).isSymbolicLink()) {
+        // After the doc is written: the file replaced by a link to the victim, then metrics.json made to fail.
+        fs.unlinkSync(file)
+        fs.symlinkSync(victim, file)
+        fs.symlinkSync(path.join(victimDir, 'nothing'), path.join(folder, 'metrics.json'))
+      }
+    }
+    return log(...a)
+  }
+  const r = await f.run(['end', '--export', out], lead)
+  f.ctx.rooms.log = log
+  assert.equal(r.code, 1)
+  assert.match(r.stderr, /export failed, the team is still running/)
+  assert.match(warned.join('\n'), /not removing .*docs\/shared\/a\.md: it changed during the export/)
+  assert.deepEqual(fs.readdirSync(victimDir), ['v.md'])
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'original')
   assert.equal(f.rooms.get(roomId).endedAt, undefined)
 })
 

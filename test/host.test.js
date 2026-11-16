@@ -74,6 +74,25 @@ test('an older app without ctx.rooms: help works, everything else refuses cleanl
   assert.match(result.error, /update the app/)
 })
 
+test('an older app: a non-string req is answered with none; a failing post is logged, never thrown', async () => {
+  const f = fakeCtx({ rooms: false })
+  const warns = []
+  f.ctx.log.warn = (t) => warns.push(t)
+  host.activate(f.ctx)
+  await f.page({ type: 'mark', req: { x: 1 }, roomId: 'room1' })
+  await f.page({ type: 'mark', req: 'a1', roomId: 'room1' })
+  const results = f.posts.map(([, m]) => m)
+  assert.deepEqual(results.map((m) => [m.type, m.req, m.ok, m.error]), [
+    ['result', undefined, false, 'Team needs cc-cockpit 0.19.1 or newer (Rooms): update the app.'],
+    ['result', 'a1', false, 'Team needs cc-cockpit 0.19.1 or newer (Rooms): update the app.'],
+  ])
+  f.ctx.panels.post = () => {
+    throw new Error('panels.post: no such view')
+  }
+  await f.page({ type: 'hello' }, 'web:4')
+  assert.ok(warns.some((t) => /team panel: panels\.post: no such view/.test(t)))
+})
+
 test('deactivate unregisters the handler', () => {
   const f = fakeCtx()
   host.activate(f.ctx)

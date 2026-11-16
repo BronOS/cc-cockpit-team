@@ -181,6 +181,30 @@
     return { message: { type: 'reply', roomId, id, text } }
   }
 
+  /**
+   * Why Rooms held a message (types.ts RoomSendAnswer): the member has it in its queue and reads it at its next
+   * `ccc room read`, but nothing has pointed it there yet. After an app restart every room comes back paused and its
+   * members count as typed, so a held answer is common then and the person must hear it, not "sent".
+   */
+  const HELD_WHY = {
+    paused: 'the room is paused (Resume it in the room view)',
+    'no-tab': 'the member has no tab open',
+    typed: "its tab counts as typed in (click the tab's badge, or mark it to deliver room messages)",
+    capped: "it had 5 pointers in a row (click the tab's badge)",
+    draft: 'its tab has a half-typed prompt',
+    'not-waiting': 'it is busy; it gets the pointer when it waits again',
+  }
+
+  /** The notice after a reply: `{ text, held }` from the host's per-recipient answers (one recipient). */
+  function replyOutcome(from, answers) {
+    const a = Array.isArray(answers) ? answers[0] : undefined
+    if (a && a.path === 'held') {
+      const why = typeof a.why === 'string' && Object.hasOwn(HELD_WHY, a.why) ? HELD_WHY[a.why] : clean(String(a.why || 'held'))
+      return { text: `Answer queued for ${from}, not yet pointed out to it: ${why}.`, held: true }
+    }
+    return { text: `Answer sent to ${from}.`, held: false }
+  }
+
   /** Mark: one line. */
   function markRequest(roomId, label) {
     const l = clean(label)
@@ -204,7 +228,7 @@
 
   const api = {
     fmtDuration, fmtCost, fmtPercent, fmtTime, statusInfo, leftText, teamFlags, teamMeta, sortTeams, pickSelected, logMoved,
-    describeEntry, KINDS, docLabel, newTeamRequest, hireRequest, inviteRequest, replyRequest, markRequest, endRequest,
+    describeEntry, KINDS, docLabel, newTeamRequest, hireRequest, inviteRequest, replyRequest, replyOutcome, markRequest, endRequest,
     activityRequest, PING_SECONDS: 30,
   }
   if (typeof module === 'object' && module.exports) module.exports = api

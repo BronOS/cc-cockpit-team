@@ -841,6 +841,159 @@ test('the largest state and the largest activity page stay under the 1 MiB post 
   assert.ok(JSON.stringify(r).length < 1024 * 1024)
 })
 
+test('a browser view names paths inside the project folder only (by real path); the desktop names any', async () => {
+  const s = setup()
+  const outside = tmp()
+  fs.writeFileSync(path.join(outside, 'secret.md'), 'not for a browser\n')
+  // A link inside the project to a file outside it: the real path decides.
+  fs.symlinkSync(path.join(outside, 'secret.md'), path.join(s.dir, 'link.md'))
+  for (const kickoff of [path.join(outside, 'secret.md'), '../' + path.basename(outside) + '/secret.md', 'link.md']) {
+    const r = await act(s.f, { type: 'new-team', title: 'T', kickoff }, 'web:1')
+    assert.equal(r.ok, false, kickoff)
+    assert.match(r.error, /only a path inside the project folder/)
+  }
+  assert.equal(s.f.rooms.size, 0)
+  const cwd = await act(s.f, { type: 'new-team', title: 'T', cwd: outside }, 'web:1')
+  assert.match(cwd.error, /only a path inside the project folder/)
+  assert.equal(s.f.rooms.size, 0)
+  const missing = await act(s.f, { type: 'new-team', title: 'T', kickoff: 'nope.md' }, 'web:1')
+  assert.match(missing.error, /no such file or folder/)
+  // Inside the project: as from the desktop.
+  const { roomId } = await team(s, 'web:1')
+  const hire = await act(s.f, { type: 'hire', roomId, name: 'qa', kickoff: 'link.md' }, 'web:1')
+  assert.match(hire.error, /only a path inside the project folder/)
+  assert.equal(s.f.rooms.get(roomId).members.has('qa'), false)
+  const end = await act(s.f, { type: 'end', roomId, dir: outside }, 'web:1')
+  assert.match(end.error, /only a path inside the project folder/)
+  assert.equal(s.f.rooms.get(roomId).endedAt, undefined)
+  assert.deepEqual(fs.readdirSync(outside), ['secret.md'])
+  fs.mkdirSync(path.join(s.dir, 'out'))
+  const ok = await act(s.f, { type: 'end', roomId, dir: 'out' }, 'web:1')
+  assert.equal(ok.ok, true, ok.error)
+  assert.ok(ok.folder.startsWith(path.join(s.dir, 'out') + path.sep))
+  // The desktop window's page is the person at the host: any folder, as a coordinator tab.
+  const d = await act(s.f, { type: 'new-team', title: 'D', kickoff: path.join(outside, 'secret.md') })
+  assert.equal(d.ok, true, d.error)
+  const dEnd = await act(s.f, { type: 'end', roomId: d.roomId, dir: outside })
+  assert.equal(dEnd.ok, true, dEnd.error)
+  assert.ok(dEnd.folder.startsWith(outside + path.sep))
+})
+
+test('reply to a paused room: the answer is held, and the page gets the per-recipient answer to say so', async () => {
+  const s = setup()
+  const { roomId, devTab } = await team(s)
+  await s.inst.questions.ask({ team: await s.inst.teams.get(roomId), member: { name: 'dev', tabId: devTab } }, 'A or B?')
+  s.f.setPaused(roomId, true)
+  const r = await act(s.f, { type: 'reply', roomId, id: 'q1', text: 'A' })
+  assert.equal(r.ok, true, r.error)
+  assert.deepEqual(r.answers, [{ to: 'dev', path: 'held', why: 'paused' }])
+})
+
+test('a state too big to post falls back to the summary, saying so; the next push posts the whole state again', async () => {
+  const s = setup()
+  const { roomId } = await team(s)
+  const real = s.f.ctx.panels.post
+  let tooBig = true
+  s.f.ctx.panels.post = (id, m, o) => {
+    if (tooBig && m.type === 'state' && m.team) throw new RangeError('panels.post: message of 2000000 chars exceeds 1048576')
+    return real(id, m, o)
+  }
+  await s.f.page({ type: 'hello', selected: roomId })
+  const fallback = postsOf(s.f, 'state').at(-1)
+  assert.equal(fallback.team, null)
+  assert.equal(fallback.error, 'the team is too big to show')
+  assert.equal(fallback.teams.length, 1)
+  // Nothing remembered as posted: once it fits, the same state is posted (it is not "unchanged").
+  assert.equal(s.panel.views.get('desktop').last, null)
+  tooBig = false
+  s.f.advance(PUSH_MS)
+  await s.panel.push()
+  const st = postsOf(s.f, 'state').at(-1)
+  assert.equal(st.team.roomId, roomId)
+  assert.equal(st.error, undefined)
+})
+
+test('a change during a running push is one more push after it, carrying the newer state', async () => {
+  const s = setup()
+  const { roomId, devTab } = await team(s)
+  await s.f.page({ type: 'hello', selected: roomId })
+  await s.fire()
+  const list = s.f.ctx.rooms.list
+  let release
+  const gate = new Promise((r) => (release = r))
+  let calls = 0
+  s.f.ctx.rooms.list = async () => {
+    if (calls++ === 0) await gate
+    return list()
+  }
+  s.f.advance(PUSH_MS)
+  const first = s.panel.push()
+  await settle()
+  const n0 = postsOf(s.f, 'state').length
+  // Two changes while the push waits on rooms.list: no second push runs alongside, one more is owed.
+  await s.inst.questions.ask({ team: await s.inst.teams.get(roomId), member: { name: 'dev', tabId: devTab } }, 'Why?')
+  assert.equal(s.panel.push(), first)
+  assert.equal(s.panel.push(), first)
+  release()
+  await first
+  await settle()
+  // The first push posted what it read; exactly one timer for the owed push.
+  assert.equal(s.timers.list.length, 1)
+  s.f.advance(PUSH_MS)
+  await s.fire()
+  assert.equal(s.timers.list.length, 0)
+  const posted = postsOf(s.f, 'state').slice(n0)
+  assert.ok(posted.length >= 1 && posted.length <= 2)
+  assert.equal(posted.at(-1).team.questions.length, 1)
+})
+
+test('a failing source of the state (stats, refresh, room list, sessions) degrades it, never blanks it', async () => {
+  for (const which of ['stats', 'refresh', 'rooms', 'sessions']) {
+    const s = setup()
+    const { roomId } = await team(s)
+    const warns = []
+    s.f.ctx.log.warn = (t) => warns.push(t)
+    const fail = async () => {
+      throw new Error(`${which} broke`)
+    }
+    if (which === 'stats') s.inst.metrics.stats = fail
+    if (which === 'refresh') s.inst.teams.refresh = fail
+    if (which === 'rooms') s.f.ctx.rooms.list = fail
+    if (which === 'sessions') s.f.ctx.sessions.list = fail
+    await s.f.page({ type: 'hello', selected: roomId }, 'web:1')
+    const st = postsOf(s.f, 'state', 'web:1').at(-1)
+    assert.ok(st, which)
+    assert.equal(st.teams.length, 1, which)
+    assert.equal(st.team.roomId, roomId, which)
+    assert.ok(warns.some((t) => t.includes(`${which} broke`)), which)
+    if (which === 'stats') assert.equal(st.team.stats, null)
+    if (which === 'sessions') assert.equal(st.team.members.find((m) => m.name === 'dev').status, 'closed')
+    host.deactivate()
+  }
+})
+
+test('new team: a failing focus of the lead tab is logged; the team is made and answered', async () => {
+  const s = setup()
+  const warns = []
+  s.f.ctx.log.warn = (t) => warns.push(t)
+  s.f.ctx.sessions.focus = async () => {
+    throw new Error('focus refused')
+  }
+  const r = await act(s.f, { type: 'new-team', title: 'T' })
+  assert.equal(r.ok, true, r.error)
+  assert.ok(r.roomId)
+  assert.ok(await s.inst.teams.get(r.roomId))
+  assert.ok(warns.some((t) => /new team: focus: focus refused/.test(t)))
+})
+
+test('activity: a cursor at the log\'s first entry answers an empty last page', async () => {
+  const s = setup()
+  const { roomId } = await team(s)
+  const r = await act(s.f, { type: 'activity', roomId, before: { seq: 1, at: 0 } })
+  assert.equal(r.ok, true, r.error)
+  assert.deepEqual([r.entries, r.before], [[], null])
+})
+
 // ---- pure helpers ----
 
 test('cleanEntry keeps plain values and flat arrays only; entryHasMember; statusOf', () => {
