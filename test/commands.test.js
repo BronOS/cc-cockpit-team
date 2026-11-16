@@ -883,14 +883,18 @@ async function hireAll(p, names) {
   }
 }
 
-test('hire: column (default): members stack below one another on the right; the 4th opens plain', async () => {
+test('hire: column (default): members stack below one another on the right; the 4th other member is plain once the group is full', async () => {
   const p = await started()
-  await hireAll(p, ['a', 'b', 'c', 'd'])
+  await hireAll(p, ['a', 'b', 'c'])
+  const rd = await p.f.run(['hire', 'd', '--kickoff', 'kick/dev.md'], p.lead)
+  assert.match(rd.stdout, /plain tab \(the group is full\)/)
   const tabOf = (n) => p.f.rooms.get(p.roomId).members.get(n).tabId
   assert.deepEqual(placeOf(p.f, 'a'), { beside: 'lead-tab', side: 'right' })
   assert.deepEqual(placeOf(p.f, 'b'), { beside: tabOf('a'), side: 'down' })
   assert.deepEqual(placeOf(p.f, 'c'), { beside: tabOf('b'), side: 'down' })
-  assert.deepEqual(placeOf(p.f, 'd'), { beside: undefined, side: undefined })
+  // Still asked: the app (here the fake, group of 4) answers placed false.
+  assert.deepEqual(placeOf(p.f, 'd'), { beside: tabOf('c'), side: 'down' })
+  assert.equal(p.f.groups.get('lead-tab').length, 4)
 })
 
 test('hire: layout grid is the 2x2', async () => {
@@ -912,7 +916,9 @@ test('hire: layout tabs opens every member plain', async () => {
 test('hire output says where the tab opened', async () => {
   const p = await started()
   const r = await p.f.run(['hire', 'a', '--kickoff', 'kick/dev.md'], p.lead)
-  assert.match(r.stdout, /^hired a: its tab opened as a split pane beside lead \(kickoff in its first prompt; also in members\/a\/kickoff\.md\)/)
+  assert.match(r.stdout, /^hired a: its tab opened as a split pane right of lead \(kickoff in its first prompt; also in members\/a\/kickoff\.md\)/)
+  const r1 = await p.f.run(['hire', 'b', '--kickoff', 'kick/dev.md'], p.lead)
+  assert.match(r1.stdout, /split pane below a \(/)
   const q = await started({ app: { layout: 'tabs' } })
   const r2 = await q.f.run(['hire', 'a', '--kickoff', 'kick/dev.md'], q.lead)
   assert.match(r2.stdout, /plain tab \(split panes off\)/)
