@@ -62,13 +62,13 @@ test('an older app without ctx.rooms: help works, everything else refuses cleanl
   assert.match((await f.run(['help'])).stdout, /ccc team/)
   const r = await f.run(['list'])
   assert.equal(r.code, 1)
-  assert.match(r.stderr, /0\.18\.1/)
+  assert.match(r.stderr, /0\.19\.1/)
   // The declared panel's page is told why it is empty, and a request is answered, not left waiting.
   await f.page({ type: 'hello' }, 'web:2')
   await f.page({ type: 'mark', req: 7, roomId: 'room1', label: 'x' })
   const [state, result] = f.posts.map(([, m]) => m)
   assert.equal(state.type, 'state')
-  assert.match(state.error, /0\.18\.1/)
+  assert.match(state.error, /0\.19\.1/)
   assert.equal(f.posts[0][2].view, 'web:2')
   assert.deepEqual([result.type, result.req, result.ok], ['result', 7, false])
   assert.match(result.error, /update the app/)
@@ -91,7 +91,7 @@ test('manifest: id, version, cli, panel, skill, setting, description names the a
   assert.equal(m.contributes.panels[0].defaultZone, 'right')
   assert.equal(m.contributes.skills[0].id, 'team-tool')
   assert.equal(m.contributes.settings.app.properties.exportDir.default, '')
-  assert.match(m.description, /Needs cc-cockpit 0\.18\.1/)
+  assert.match(m.description, /Needs cc-cockpit 0\.19\.1/)
   for (const f of [m.main, m.contributes.panels[0].entry, m.contributes.panels[0].icon, m.contributes.skills[0].dir + '/SKILL.md']) {
     assert.ok(fs.existsSync(path.join(__dirname, '..', f)), f)
   }
