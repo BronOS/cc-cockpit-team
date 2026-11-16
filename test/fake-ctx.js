@@ -155,6 +155,29 @@ function fakeCtx(opts = {}) {
     return { tabId, cwd }
   }
 
+  // Split groups: tabId -> group (an array of tab ids, at most 4 panes); `tooSmall` tab ids refuse a split.
+  const groups = new Map()
+  const tooSmall = new Set()
+  const checkBeside = (method, beside, side) => {
+    if (beside === undefined) {
+      if (side !== undefined) throw refuse(method, 'side needs beside')
+      return undefined
+    }
+    if (typeof beside !== 'string' || beside === '') throw refuse(method, 'beside must be a tab id')
+    if (side !== undefined && side !== 'right' && side !== 'down') throw refuse(method, "side must be 'right' or 'down'")
+    if (!sessions.has(beside)) throw refuse(method, 'beside: no such tab in this window')
+    return { beside, side: side ?? 'right' }
+  }
+  /** Place a new tab beside its anchor: false (a plain tab) when the group is full or the pane too small. */
+  const placeTab = (tabId, place) => {
+    if (!sessions.has(place.beside) || tooSmall.has(place.beside)) return false
+    const g = groups.get(place.beside) || [place.beside]
+    if (g.length >= 4) return false
+    g.push(tabId)
+    for (const t of g) groups.set(t, g)
+    return true
+  }
+
   const checkDocPath = (method, p) => {
     const parts = typeof p === 'string' ? p.split('/') : []
     let below
@@ -240,14 +263,18 @@ function fakeCtx(opts = {}) {
       checkName('rooms.open', options.name)
       if (r.members.has(options.name)) throw refuse('rooms.open', `${options.name} is already a member`)
       if (r.members.size >= caps.members) throw refuse('rooms.open', `at most ${caps.members} members a room (membersPerRoom)`)
+      // `beside` / `side` (split panes): the anchor is checked before the open counts against the opens a minute, as
+      // main does (host-api.ts `placement`); an older app (`opts.noBeside`) ignores both and answers without `placed`.
+      const place = opts.noBeside ? undefined : checkBeside('rooms.open', options.beside, options.side)
       const { tabId, cwd } = openTab('rooms.open', options)
+      const placed = place === undefined ? undefined : placeTab(tabId, place)
       const m = { name: options.name, coordinator: options.coordinator === true, tabId, held: 0 }
       r.members.set(m.name, m)
       setSessionRoom(tabId, r, m)
       opens.push({ via: 'rooms.open', roomId: id, tabId, ...structuredClone(options), cwd })
       log(r, { type: 'join', member: m.name, coordinator: m.coordinator, via: 'open' })
       emitSessions()
-      return { tabId }
+      return placed === undefined ? { tabId } : { tabId, placed }
     },
     async invite(id, options = {}) {
       const r = live('rooms.invite', id)
@@ -496,6 +523,9 @@ function fakeCtx(opts = {}) {
     settingsListeners,
     rooms,
     sessions,
+    /** Split groups (tabId -> its group's tab ids) and the tabs whose pane is too small to split. */
+    groups,
+    tooSmall,
     store,
     caps,
     clock,

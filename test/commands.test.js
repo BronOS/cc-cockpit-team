@@ -869,3 +869,73 @@ test('panel hire: a team ended while the panel read its members is refused insid
   assert.match(res[1].error, /team has ended/)
   assert.equal(f.opens.some((o) => o.name === 'qa'), false)
 })
+
+// --- split panes (rooms.open beside / side)
+
+const placeOf = (f, name) => {
+  const o = f.opens.find((x) => x.name === name)
+  return { beside: o.beside, side: o.side }
+}
+async function hireAll(p, names) {
+  for (const n of names) {
+    const r = await p.f.run(['hire', n, '--kickoff', 'kick/dev.md'], p.lead)
+    assert.equal(r.code, undefined, r.stderr)
+  }
+}
+
+test('hire: members 1-3 open as a 2x2 beside the coordinator; the 4th opens plain', async () => {
+  const p = await started()
+  await hireAll(p, ['a', 'b', 'c', 'd'])
+  const tabOf = (n) => p.f.rooms.get(p.roomId).members.get(n).tabId
+  assert.deepEqual(placeOf(p.f, 'a'), { beside: 'lead-tab', side: 'right' })
+  assert.deepEqual(placeOf(p.f, 'b'), { beside: 'lead-tab', side: 'down' })
+  assert.deepEqual(placeOf(p.f, 'c'), { beside: tabOf('a'), side: 'down' })
+  assert.deepEqual(placeOf(p.f, 'd'), { beside: undefined, side: undefined })
+})
+
+test('hire: placed false (pane too small) is a plain tab, no retry, the hire stands', async () => {
+  const p = await started()
+  p.f.tooSmall.add('lead-tab')
+  await hireAll(p, ['a'])
+  assert.equal(p.f.opens.filter((o) => o.name === 'a').length, 1)
+  assert.ok(p.f.rooms.get(p.roomId).members.has('a'))
+  assert.equal(p.f.groups.has('lead-tab'), false)
+})
+
+test('hire: the 2x2 lands in one group of 4 in the fake, as in the app', async () => {
+  const p = await started()
+  await hireAll(p, ['a', 'b', 'c'])
+  assert.equal(p.f.groups.get('lead-tab').length, 4)
+})
+
+test('hire: an anchor gone from the window is retried once as a plain tab, costing one open', async () => {
+  const p = await started({ opensPerMinute: 2 })
+  // The member list still names the lead's tab, but the window no longer has it.
+  p.f.sessions.delete('lead-tab')
+  await hireAll(p, ['a'])
+  const opens = p.f.opens.filter((o) => o.name === 'a')
+  assert.equal(opens.length, 1)
+  assert.equal(opens[0].beside, undefined)
+  assert.ok(p.f.rooms.get(p.roomId).members.has('a'))
+})
+
+test('hire: other open refusals are not retried', async () => {
+  const p = await started({ opensPerMinute: 1 })
+  await hireAll(p, ['b'])
+  const r = await p.f.run(['hire', 'a', '--kickoff', 'kick/dev.md'], p.lead)
+  assert.notEqual(r.code, undefined)
+  assert.match(r.stderr, /tabs a minute/)
+})
+
+test('hire: the splitPanes setting off opens every member plain', async () => {
+  const p = await started({ app: { splitPanes: false } })
+  await hireAll(p, ['a', 'b'])
+  assert.deepEqual(placeOf(p.f, 'a'), { beside: undefined, side: undefined })
+  assert.deepEqual(placeOf(p.f, 'b'), { beside: undefined, side: undefined })
+})
+
+test('hire: an older app ignores beside and answers no placed; the hire works', async () => {
+  const p = await started({ noBeside: true })
+  await hireAll(p, ['a', 'b'])
+  assert.ok(p.f.rooms.get(p.roomId).members.has('b'))
+})

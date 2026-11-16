@@ -33,6 +33,9 @@ help
   tab), until the coordinator runs `ccc room read`, which the skill tells it to do when it expects answers. Members
   should not expect an immediate reaction.
 - `fire` removes a member from the room; its tab stays open.
+- A hired member opens as a split pane beside the coordinator's tab: the first three make a 2x2 with it (right, below,
+  below the first); later members, or one the app cannot place, open as plain tabs. Switch it off with the setting
+  "Open members as split panes beside the coordinator".
 - `hire`, `invite`, `fire`, `mark`, `end` are for coordinators; `ask`, `list`, `stats` for any member. The caller is
   known by main from its tab, never from an argument; a tab outside a team gets the same refusal for all but `start`
   and `help`.
