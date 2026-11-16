@@ -37,8 +37,12 @@ help
   known by main from its tab, never from an argument; a tab outside a team gets the same refusal for all but `start`
   and `help`.
 - A kickoff is a UTF-8 text file of at most 256 KiB (no symlink, not empty, no control, bidi or invisible
-  characters). It is stored as the room doc `members/<name>/kickoff.md`, and the new tab's first prompt only says to
-  read it.
+  characters). It is stored as the room doc `members/<name>/kickoff.md`, and its text is also the new tab's first
+  prompt, under a short header naming the team, the member, its role (coordinator or member) and that doc. In the
+  prompt, not only in the doc: the prompt is the tab's first user message, while a doc read with `ccc room doc get`
+  arrives as tool output, which Claude Code's auto mode treats as data rather than your instructions (a member told only
+  to read its kickoff had its first step denied as unsanctioned). A kickoff over 40 000 characters is cut in the prompt
+  with a last line saying the rest is in the doc and must be read before starting; the doc always has all of it.
 - `ask` is how a member reaches you: it records the question, raises a notice, and prints its id. Your reply arrives in
   the member's room as a message from the plugin starting `Answer to your question <id>:`.
 - Refusals from Rooms (name, send rate, member and room caps) are printed in Rooms' own words. The caps are settings

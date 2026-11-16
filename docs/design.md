@@ -39,7 +39,7 @@ log stay in Rooms, where main enforces every rule. The old experimental plugin o
 | Command | Who | What |
 |---|---|---|
 | `start "<title>" [--as <name>]` | a Claude tab in no room | creates the room, prints a coordinator invite for `<name>` (default `lead`) and the `ccc room join <code>` line to run; refused for a tab already in a room |
-| `hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--coordinator]` | coordinator | stores the file as `members/<name>/kickoff.md`, opens the tab in the room with one fixed prompt: read your kickoff with `ccc room doc get members/<name>/kickoff.md` |
+| `hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--coordinator]` | coordinator | stores the file as `members/<name>/kickoff.md`, opens the tab in the room with the kickoff text as its prompt, under a header naming the team, the member, its role and that doc (below) |
 | `invite <name> [--coordinator]` | coordinator | a one-time code for an existing tab to `ccc room join` |
 | `fire <name>` | coordinator | removes the member; its tab stays |
 | `ask "<question>"` / `-` | any member | a question to the person (§3); prints its id |
@@ -56,6 +56,16 @@ log stay in Rooms, where main enforces every rule. The old experimental plugin o
   anything is written; a failed open removes the seeded kickoff doc. The kickoff is refused
   before any tab opens when missing, over 256 KiB, not UTF-8 text or with characters Rooms refuses. The tool does not
   read its meaning.
+- The opening prompt (`kickoffPrompt`, lib/kickoff.js, one builder for `hire` and the panel's Hire and New team) is
+  the kickoff text itself under a short header: the team's title, the member's name and role (coordinator or member)
+  and the doc that holds the same text. Not a pointer to the doc alone: the prompt is the tab's first user message,
+  while a doc fetched with `ccc room doc get` reaches Claude as tool output, which Claude Code's auto mode treats as data,
+  not the user's instructions. A live member told only to read its kickoff had its first step (a `ccc room doc put`
+  the kickoff asked for) denied as unsanctioned communication, and stopped. The app refuses a prompt over 100 000
+  UTF-16 units and passes it as one argv element (Linux caps one at 128 KiB), so a kickoff over 40 000 units is cut
+  there (never inside a surrogate pair) and the prompt ends with a line saying the rest is in the doc and must be read
+  before starting. Control characters the app would strip are stripped first (CRLF becomes LF), so the length checked
+  is the length sent. No permission rule is added for members.
 - From the panel: **New team** (title, optional lead kickoff file, model, effort, cwd) opens a fresh lead tab as
   coordinator through `ctx.rooms.open` (no invite step); **Hire…** is the same form as `hire`.
 - Caps are Rooms' and the person's limits: rooms per project, members per room, hires a minute (`opensPerMinute`). A

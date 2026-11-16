@@ -37,7 +37,10 @@ Rooms' own words.
   reported); nothing will interrupt you with them. A second `start` from a tab that has not joined yet
   re-issues the invite for the room already started, with its old title and name.
 - `hire` (coordinator) stores the kickoff file as the doc `members/<name>/kickoff.md` and opens a new Claude tab in the
-  team. The tab's first prompt is always `Read your kickoff: ccc room doc get members/<name>/kickoff.md`. The file is
+  team. The tab's first prompt is the kickoff text itself, under a short header naming the team, the member, whether it
+  is a coordinator, and the doc. It goes in the prompt because auto mode treats a doc a tab reads with a tool as data,
+  not as the user's instructions, and can deny what it asks for. Over 40 000 characters the prompt's copy is
+  cut and ends with a line saying the rest is in the doc and must be read before starting; the doc has all of it. The file is
   resolved against your cwd, must be a regular file (a symlink is refused, even to a regular file: name the file
   itself), not empty, of at most 256 KiB, UTF-8 text without control, bidi or invisible characters (tabs, LF and CRLF
   are fine; a lone CR is refused), and is refused before any tab opens otherwise. `--kickoff` is required; a missing,

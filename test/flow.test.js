@@ -8,6 +8,7 @@ const os = require('node:os')
 const path = require('node:path')
 const host = require('../dist/host.js')
 const { fakeCtx } = require('./fake-ctx')
+const { kickoffPrompt } = require('../lib/kickoff.js')
 
 test('flow: start, join, hire two, list', async (t) => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'team-flow-')))
@@ -41,8 +42,8 @@ test('flow: start, join, hire two, list', async (t) => {
   assert.equal(room.docs.get('members/frontend/kickoff.md'), '# Frontend\nBuild the page.\n')
   const opens = f.opens.filter((o) => o.via === 'rooms.open')
   assert.deepEqual(opens.map((o) => [o.name, o.model, o.prompt]), [
-    ['backend', 'opus', 'Read your kickoff: ccc room doc get members/backend/kickoff.md'],
-    ['frontend', 'sonnet', 'Read your kickoff: ccc room doc get members/frontend/kickoff.md'],
+    ['backend', 'opus', kickoffPrompt({ team: 'Checkout v2', name: 'backend', coordinator: false, docPath: 'members/backend/kickoff.md', text: '# Backend\nBuild the API.\n' })],
+    ['frontend', 'sonnet', kickoffPrompt({ team: 'Checkout v2', name: 'frontend', coordinator: false, docPath: 'members/frontend/kickoff.md', text: '# Frontend\nBuild the page.\n' })],
   ])
 
   // A hired member sees the team.

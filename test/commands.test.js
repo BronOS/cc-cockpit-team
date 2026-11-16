@@ -7,6 +7,7 @@ const path = require('node:path')
 const host = require('../dist/host.js')
 const { fakeCtx } = require('./fake-ctx')
 const { parseArgs, UsageError } = require('../lib/commands.js')
+const { kickoffPrompt, PROMPT_MAX } = require('../lib/kickoff.js')
 const { NOT_IN_TEAM, NOT_COORDINATOR } = require('../lib/teams.js')
 
 test.afterEach(() => host.deactivate())
@@ -228,7 +229,7 @@ test('start: usage errors exit 2', async () => {
 
 // --- hire
 
-test('hire: seeds the kickoff, opens the tab with the fixed prompt and the options', async () => {
+test('hire: seeds the kickoff, opens the tab with the kickoff text as its prompt and the options', async () => {
   const { f, dir, roomId, lead } = await started()
   fs.mkdirSync(path.join(dir, 'wt'))
   const r = await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md', '--model', 'sonnet', '--effort', 'high', '--cwd', 'wt'], lead)
@@ -237,7 +238,10 @@ test('hire: seeds the kickoff, opens the tab with the fixed prompt and the optio
   const room = f.rooms.get(roomId)
   assert.equal(room.docs.get('members/dev/kickoff.md'), '# You are dev\n')
   const open = f.opens.find((o) => o.name === 'dev')
-  assert.equal(open.prompt, 'Read your kickoff: ccc room doc get members/dev/kickoff.md')
+  // The kickoff itself is the tab's first user message (auto mode treats a doc read by a tool as data).
+  assert.equal(open.prompt, kickoffPrompt({ team: 'Build it', name: 'dev', coordinator: false, docPath: 'members/dev/kickoff.md', text: '# You are dev\n' }))
+  assert.ok(open.prompt.endsWith('# You are dev\n'))
+  assert.match(open.prompt, /team "Build it"/)
   assert.equal(open.model, 'sonnet')
   assert.equal(open.effort, 'high')
   assert.equal(open.cwd, path.join(dir, 'wt'))
@@ -253,6 +257,20 @@ test('hire: the kickoff and --cwd resolve against the caller cwd; --coordinator 
   assert.equal(open.cwd, path.join(dir, 'kick'))
   assert.equal(open.coordinator, true)
   assert.equal(f.rooms.get(roomId).members.get('rev').coordinator, true)
+})
+
+test('hire: a kickoff longer than the prompt limit is cut in the prompt, whole in the doc', async () => {
+  const { f, dir, roomId, lead } = await started()
+  const long = '# You are dev\n' + 'word '.repeat(50_000) + '\nTHE END\n'
+  fs.writeFileSync(path.join(dir, 'kick', 'long.md'), long)
+  const r = await f.run(['hire', 'dev', '--kickoff', 'kick/long.md'], lead)
+  assert.equal(r.code, undefined, r.stderr)
+  assert.equal(f.rooms.get(roomId).docs.get('members/dev/kickoff.md'), long)
+  const open = f.opens.find((o) => o.name === 'dev')
+  assert.ok(open.prompt.length <= PROMPT_MAX)
+  assert.ok(open.prompt.includes('# You are dev\nword word'))
+  assert.doesNotMatch(open.prompt, /THE END/)
+  assert.match(open.prompt.trimEnd().split('\n').at(-1), /rest is in the room doc members\/dev\/kickoff\.md/)
 })
 
 test('hire is coordinator-only; outsiders get the one not-in-team text', async () => {

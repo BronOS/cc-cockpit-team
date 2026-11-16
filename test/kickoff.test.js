@@ -4,7 +4,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { readKickoff, badTextChar, KICKOFF_MAX } = require('../lib/kickoff.js')
+const { readKickoff, badTextChar, kickoffPrompt, KICKOFF_MAX, PROMPT_MAX } = require('../lib/kickoff.js')
 const { TeamError } = require('../lib/teams.js')
 
 const ch = (cp) => String.fromCodePoint(cp)
@@ -98,4 +98,67 @@ test('badTextChar: tab, LF and CRLF pass; ZWNJ and ZWJ pass', () => {
   assert.equal(badTextChar('a' + ch(0x200c) + ch(0x200d) + 'b'), null)
   assert.equal(badTextChar('a\r'), 'U+000D (a CR not followed by LF) at line 1')
   assert.equal(badTextChar(ch(0x2066)), 'U+2066 at line 1')
+})
+
+// --- the opening prompt
+
+// What cc-cockpit's prepareText (src/main/sessions/send-gate.ts) strips or refuses in a prompt.
+// eslint-disable-next-line no-control-regex
+const APP_STRIPS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/
+const MODE_PREFIX = /^\s*[/!#&]/
+
+test('kickoffPrompt: the kickoff text itself, under a header naming the team, the member, its role and the doc', () => {
+  const p = kickoffPrompt({ team: 'Checkout v2', name: 'dev', coordinator: false, docPath: 'members/dev/kickoff.md', text: '# You are dev\nBuild the API.\n' })
+  assert.match(p, /team "Checkout v2"/)
+  assert.match(p, /\bdev\b/)
+  assert.match(p, /a member/)
+  assert.match(p, /`ccc room doc get members\/dev\/kickoff\.md`/)
+  assert.ok(p.endsWith('# You are dev\nBuild the API.\n'), p)
+  assert.doesNotMatch(p, MODE_PREFIX)
+  assert.doesNotMatch(p, /cut here/)
+  const lead = kickoffPrompt({ team: 'T', name: 'lead', coordinator: true, docPath: 'members/lead/kickoff.md', text: 'x' })
+  assert.match(lead, /the coordinator/)
+})
+
+test('kickoffPrompt: a long kickoff is cut below the app limit and ends with the pointer to the doc', () => {
+  const docPath = 'members/dev/kickoff.md'
+  const text = 'a'.repeat(KICKOFF_MAX)
+  const p = kickoffPrompt({ team: 'T', name: 'dev', coordinator: false, docPath, text })
+  assert.ok(p.length <= PROMPT_MAX, `${p.length}`)
+  // Below cc-cockpit's own cap (MAX_TEXT_CHARS, 100 000 UTF-16 units) and Linux's 128 KiB for one argv element.
+  assert.ok(PROMPT_MAX < 100_000)
+  assert.ok(Buffer.byteLength('😀'.repeat(PROMPT_MAX / 2)) < 128 * 1024)
+  const last = p.trimEnd().split('\n').at(-1)
+  assert.match(last, /rest is in the room doc members\/dev\/kickoff\.md/)
+  assert.match(last, /before you start/)
+  assert.match(p, /a…\n/)
+  // Exactly at the limit: not cut.
+  const head = kickoffPrompt({ team: 'T', name: 'dev', coordinator: false, docPath, text: 'x' }).length - 1
+  const fits = kickoffPrompt({ team: 'T', name: 'dev', coordinator: false, docPath, text: 'b'.repeat(PROMPT_MAX - head) })
+  assert.equal(fits.length, PROMPT_MAX)
+  assert.doesNotMatch(fits, /cut here/)
+})
+
+test('kickoffPrompt: the cut never splits a surrogate pair', () => {
+  for (const pad of [0, 1]) {
+    const p = kickoffPrompt({ team: 'T', name: 'dev', coordinator: false, docPath: 'members/dev/kickoff.md', text: 'x'.repeat(pad) + '😀'.repeat(PROMPT_MAX) })
+    assert.ok(p.length <= PROMPT_MAX)
+    for (let i = 0; i < p.length; i++) {
+      const c = p.charCodeAt(i)
+      if (c >= 0xd800 && c <= 0xdbff) assert.ok(p.charCodeAt(i + 1) >= 0xdc00 && p.charCodeAt(i + 1) <= 0xdfff, `lone high at ${i}`)
+      else if (c >= 0xdc00 && c <= 0xdfff) assert.ok(p.charCodeAt(i - 1) >= 0xd800 && p.charCodeAt(i - 1) <= 0xdbff, `lone low at ${i}`)
+    }
+  }
+})
+
+test('kickoffPrompt: control characters the app would strip are taken out; tab, LF and CRLF become tab and LF', () => {
+  const p = kickoffPrompt({
+    team: 'T',
+    name: 'dev',
+    coordinator: false,
+    docPath: 'members/dev/kickoff.md',
+    text: 'a\0b\x1b[201~c\td\r\ne\rf\x7fg\x9bh\n',
+  })
+  assert.doesNotMatch(p, APP_STRIPS)
+  assert.ok(p.endsWith('ab[201~c\td\ne\nfgh\n'), JSON.stringify(p.slice(-30)))
 })

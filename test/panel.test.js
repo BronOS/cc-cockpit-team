@@ -11,6 +11,7 @@ const { createQuestions, replyPrefix } = require('../lib/questions.js')
 const { createMetrics } = require('../lib/metrics.js')
 const { createEnding } = require('../lib/export.js')
 const { createHiring } = require('../lib/commands.js')
+const { kickoffPrompt } = require('../lib/kickoff.js')
 const { createPanel, cleanEntry, entryHasMember, statusOf, PUSH_MS, VIEWS_MAX, VIEW_TTL_MS, ACTIVITY_PAGE, FIELD_TEXT_MAX } = require('../lib/panel.js')
 
 const dirs = []
@@ -304,7 +305,8 @@ test('new team: opens a lead tab as coordinator with the kickoff seeded, focuses
   assert.equal(open.model, 'sonnet')
   assert.equal(open.effort, 'low')
   assert.equal(open.cwd, s.dir)
-  assert.equal(open.prompt, 'Read your kickoff: ccc room doc get members/lead/kickoff.md')
+  // The same builder as `ccc team hire`: the kickoff text is the tab's first user message.
+  assert.equal(open.prompt, kickoffPrompt({ team: 'Launch', name: 'lead', coordinator: true, docPath: 'members/lead/kickoff.md', text: '# You lead\n' }))
   assert.equal(s.f.rooms.get(r.roomId).docs.get('members/lead/kickoff.md'), '# You lead\n')
   assert.ok(await s.inst.teams.get(r.roomId))
   await settle()
@@ -348,7 +350,7 @@ test('hire: same checks as the command, against the project folder', async () =>
   const { roomId } = await team(s)
   const open = s.f.opens.find((o) => o.name === 'dev')
   assert.equal(open.effort, 'high')
-  assert.equal(open.prompt, 'Read your kickoff: ccc room doc get members/dev/kickoff.md')
+  assert.equal(open.prompt, kickoffPrompt({ team: 'Checkout v2', name: 'dev', coordinator: false, docPath: 'members/dev/kickoff.md', text: '# You are dev\n' }))
   const taken = await act(s.f, { type: 'hire', roomId, name: 'dev', kickoff: 'dev.md' })
   assert.equal(taken.ok, false)
   assert.match(taken.error, /already in the team/)
