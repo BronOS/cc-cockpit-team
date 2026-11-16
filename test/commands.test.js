@@ -72,6 +72,8 @@ test('start: creates the room and its record, prints a coordinator invite for le
   assert.match(r.stdout, /team "Build it" started/)
   assert.match(r.stdout, /ccc room join inv\d+/)
   assert.match(r.stdout, /as lead \(coordinator\)/)
+  // The coordinator's tab is typed in: Rooms holds members' messages to it until it reads them.
+  assert.match(r.stdout, /run `ccc room read` when you expect answers/)
   const [room] = f.rooms.values()
   assert.equal(room.title, 'Build it')
   const [inv] = room.invites.values()

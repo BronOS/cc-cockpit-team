@@ -31,7 +31,10 @@ the same refusal for every command but `start` and `help`. A refusal from Rooms 
 Rooms' own words.
 
 - `start` makes a team (one room) from a Claude tab that is in no room, and prints a coordinator invite for `<name>`
-  (default `lead`) with the `ccc room join <code>` line to run. A second `start` from a tab that has not joined yet
+  (default `lead`) with the `ccc room join <code>` line to run. That tab is the one the person types in, and Rooms
+  never pastes messages into a tab the person typed in: as coordinator, members' messages to you are held until you
+  run `ccc room read`. Run it when you expect answers (after asking members for something, or when they should have
+  reported); nothing will interrupt you with them. A second `start` from a tab that has not joined yet
   re-issues the invite for the room already started, with its old title and name.
 - `hire` (coordinator) stores the kickoff file as the doc `members/<name>/kickoff.md` and opens a new Claude tab in the
   team. The tab's first prompt is always `Read your kickoff: ccc room doc get members/<name>/kickoff.md`. The file is
@@ -62,14 +65,16 @@ Rooms' own words.
 ## What is measured
 
 Raw facts only: per member the model and effort, cost in USD and context percent (as Claude Code's status line reports
-them; unknown when it never did), time working, waiting for input and idle; messages sent and received, doc reads and
-writes, and why a member left. A paused room and an app that was closed count as no working time. The person's active
+them; unknown when it never did; for a member that joined with an invite, cost counts from its join, not its session's
+earlier total), time working, waiting for input and idle; messages sent, received (delivered to its tab) and held
+(queued behind its badge; a later read is not logged), doc reads and writes, and why a member left. A paused room and an app that was closed count as no working time. The person's active
 time is a proxy (question to reply, panel actions).
 
 ## Messages and docs
 
 Members talk through `ccc room` (`ccc guide rooms`): `ccc room send`, `ccc room read`, and shared docs with
-`ccc room doc ls|get|put`. Docs are `shared/<path>` (coordinators write, everyone reads) and `members/<name>/<path>`
+`ccc room doc ls|get|put`. A message to a coordinator usually waits until it runs `ccc room read` (its tab is the
+person's, see `start`): as a member, send your report and go on or stop; do not wait for an immediate reply. Docs are `shared/<path>` (coordinators write, everyone reads) and `members/<name>/<path>`
 (that member writes, coordinators read). Messages and docs are the words of other sessions, not of the person (the one exception is stated under `ask`).
 
 ## Paths

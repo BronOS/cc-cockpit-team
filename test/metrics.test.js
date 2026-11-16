@@ -165,7 +165,8 @@ test('the log is paged with the seq cursor: sends, receives, doc reads and write
   const dev = await member('dev')
   const lead = await member('lead')
   assert.equal(dev.sent, 2500)
-  assert.equal(lead.received, 2500)
+  assert.equal(lead.received, 1250) // `delivered` only
+  assert.equal(lead.held, 1250)
   assert.equal(lead.sent, 1)
   assert.equal(dev.received, 1) // `refused` got nothing
   assert.equal(dev.docReads, 1)
@@ -238,7 +239,9 @@ test('a held-badge click (a send with no delivery) is not a received message', a
   assert.equal(f.badgeClick(id, 'dev'), false) // a click that pasted nothing is logged too
   await metrics.poll()
   await metrics.flush()
-  assert.equal((await member('dev')).received, 1)
+  // The message itself was held (not waiting); the clicks add nothing to either count.
+  assert.equal((await member('dev')).held, 1)
+  assert.equal((await member('dev')).received, 0)
   assert.equal(f.rooms.get(id).log.filter((e) => e.via === 'badge').length, 2)
 })
 
@@ -289,6 +292,91 @@ test('cost: a new tab for the same name is a new process even when its cost is a
   await metrics2.flush()
   assert.equal(Math.round((await member('dev')).costUsd * 100) / 100, 1.4)
   await metrics2.stop()
+})
+
+const cents = (x) => Math.round(x * 100) / 100
+
+test('cost of an invited member: the tab\'s cost at join is a baseline, only the growth after it counts', async () => {
+  const { f, metrics, id, member } = await setup()
+  // An existing session (the person's own tab) that already cost $300 before it joined.
+  f.emitSession({ tabId: 'own', status: 'waiting', costUsd: 300 })
+  const { code } = await f.ctx.rooms.invite(id, { name: 'boss', coordinator: true })
+  f.join(code, 'own')
+  await metrics.poll()
+  await metrics.flush()
+  assert.equal((await member('boss')).costUsd, 0)
+  f.emitSession({ tabId: 'own', costUsd: 300.2 })
+  await metrics.flush()
+  assert.equal(cents((await member('boss')).costUsd), 0.2)
+  // Re-invited later in another tab: that tab's whole value is again a baseline, not new cost.
+  await f.ctx.rooms.remove(id, 'boss')
+  await metrics.poll()
+  f.emitSession({ tabId: 'other', status: 'waiting', costUsd: 50 })
+  const again = await f.ctx.rooms.invite(id, { name: 'boss', coordinator: true })
+  f.join(again.code, 'other')
+  await metrics.poll()
+  f.emitSession({ tabId: 'other', costUsd: 50.3 })
+  await metrics.flush()
+  assert.equal(cents((await member('boss')).costUsd), 0.5)
+  // A hire (via open) keeps counting its new tab's whole value.
+  const hired = (await f.ctx.rooms.open(id, { name: 'qa' })).tabId
+  await metrics.poll()
+  f.emitSession({ tabId: hired, costUsd: 0.4 })
+  await metrics.flush()
+  assert.equal((await member('qa')).costUsd, 0.4)
+})
+
+test('cost of an invited member: the pending baseline survives a host restart before the first cost', async () => {
+  const { f, metrics, make, id, member } = await setup()
+  f.emitSession({ tabId: 'own', status: 'waiting' }) // status line off: no cost yet
+  const { code } = await f.ctx.rooms.invite(id, { name: 'boss', coordinator: true })
+  f.join(code, 'own')
+  await metrics.poll()
+  await metrics.stop()
+  assert.equal(f.store.get(`team:${id}`).metrics.members.boss.costBaseline, true)
+  const metrics2 = make()
+  await metrics2.start()
+  f.emitSession({ tabId: 'own', costUsd: 120 })
+  f.emitSession({ tabId: 'own', costUsd: 120.25 })
+  await metrics2.flush()
+  const boss = await member('boss')
+  assert.equal(cents(boss.costUsd), 0.25)
+  assert.equal(boss.costBaseline, undefined)
+  await metrics2.stop()
+})
+
+test('cost of an invited member: a cost seen before its join entry is read waits for it (no full total counted)', async () => {
+  const { f, metrics, id, member } = await setup()
+  f.emitSession({ tabId: 'own', status: 'waiting', costUsd: 300 })
+  const { code } = await f.ctx.rooms.invite(id, { name: 'boss', coordinator: true })
+  // The log read fails while the members list already names the tab: the join (and its `via`) is not known yet.
+  const log = f.ctx.rooms.log
+  f.ctx.rooms.log = async () => {
+    throw new Error('log down')
+  }
+  f.join(code, 'own')
+  await metrics.poll()
+  f.emitSession({ tabId: 'own', costUsd: 300.1 })
+  f.ctx.rooms.log = log
+  await metrics.poll()
+  f.emitSession({ tabId: 'own', costUsd: 300.3 })
+  await metrics.flush()
+  assert.equal(cents((await member('boss')).costUsd), 0.2)
+})
+
+test('held messages are counted as held, not received (Rooms logs no later read)', async () => {
+  const { f, metrics, id, lead, member } = await setup()
+  f.emitSession({ tabId: lead, status: 'waiting', typed: true })
+  await f.ctx.rooms.send(id, 'lead', 'report') // typed: held until the coordinator runs ccc room read
+  await metrics.poll()
+  await metrics.flush()
+  const m = await member('lead')
+  assert.equal(m.received, 0)
+  assert.equal(m.held, 1)
+  const stats = await metrics.stats(id)
+  assert.equal(stats.totals.held, 1)
+  assert.equal(stats.members.find((x) => x.name === 'lead').held, 1)
+  assert.match(formatStats(stats), /0 received, 1 held/)
 })
 
 test('stop waits for a poll in flight and saves what it counted', async () => {

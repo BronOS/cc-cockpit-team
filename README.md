@@ -28,7 +28,10 @@ help
 ```
 
 - `start` (a Claude tab in no room) makes the team and prints a coordinator invite to run with `ccc room join <code>`;
-  a second `start` before the tab joined prints the invite of the room already started again.
+  a second `start` before the tab joined prints the invite of the room already started again. The coordinator's tab is
+  the one you type in, and Rooms never pastes messages into such a tab: members' reports wait, held (the badge on its
+  tab), until the coordinator runs `ccc room read`, which the skill tells it to do when it expects answers. Members
+  should not expect an immediate reaction.
 - `fire` removes a member from the room; its tab stays open.
 - `hire`, `invite`, `fire`, `mark`, `end` are for coordinators; `ask`, `list`, `stats` for any member. The caller is
   known by main from its tab, never from an argument; a tab outside a team gets the same refusal for all but `start`
@@ -53,8 +56,9 @@ Destructive steps ask in the page.
 ## Metrics
 
 Raw facts per member: model and effort, cost in USD and context percent as Claude Code reports them (unknown when it
-never did), time working, waiting for input and idle, messages sent and received, doc reads and writes, and why a
-member left. Marks cut the team's time into spans, with cost and time per span. A paused room and a closed app count as
+never did; a member that joined with an invite, such as the coordinator, counts from its join, not from its session's
+earlier total), time working, waiting for input and idle, messages sent, received and held (queued until the member
+reads them; Rooms does not log the later read), doc reads and writes, and why a member left. Marks cut the team's time into spans, with cost and time per span. A paused room and a closed app count as
 no working time. Your active time is a proxy (question to reply, plus a fixed window per panel action).
 
 ## Export

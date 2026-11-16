@@ -25,7 +25,7 @@ test('totalsOf: sums members; cost unknown (null) when never seen', () => {
       logSeq: 0,
     },
   })
-  assert.deepEqual(totalsOf(r), { costUsd: 0.75, workingMs: 151, waitingMs: 10, idleMs: 1, sent: 2, received: 3, docReads: 4, docWrites: 5 })
+  assert.deepEqual(totalsOf(r), { costUsd: 0.75, workingMs: 151, waitingMs: 10, idleMs: 1, sent: 2, received: 3, held: 0, docReads: 4, docWrites: 5 })
 })
 
 test('spansOf: start, marks and now; costs and working time are differences of the snapshots', () => {

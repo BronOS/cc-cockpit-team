@@ -187,11 +187,12 @@ test('a message sent while the export runs: log.jsonl stops where the stats were
   const log = fs.readFileSync(path.join(folder, 'log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   const m = JSON.parse(fs.readFileSync(path.join(folder, 'metrics.json'), 'utf8'))
   const sentIn = (name) => log.filter((e) => e.type === 'send' && e.from === name).length
-  const recvIn = (name) => log.filter((e) => e.type === 'send' && (e.delivery || []).some((d) => d.to === name && (d.path === 'delivered' || d.path === 'held'))).length
+  const gotIn = (name, p) => log.filter((e) => e.type === 'send' && (e.delivery || []).some((d) => d.to === name && d.path === p)).length
   assert.ok(log.some((e) => e.type === 'send' && e.text === 'before'))
   assert.ok(!log.some((e) => e.type === 'send' && e.text === 'during'), 'the late send is in neither')
   assert.equal(m.members.find((x) => x.name === 'lead').sent ?? 0, sentIn('lead'))
-  assert.equal(m.members.find((x) => x.name === 'dev').received ?? 0, recvIn('dev'))
+  assert.equal(m.members.find((x) => x.name === 'dev').received ?? 0, gotIn('dev', 'delivered'))
+  assert.equal(m.members.find((x) => x.name === 'dev').held ?? 0, gotIn('dev', 'held'))
   assert.equal(m.logSeq, log[log.length - 1].seq)
   assert.match(fs.readFileSync(path.join(folder, 'metrics.md'), 'utf8'), new RegExp(`up to entry ${m.logSeq}\\b`))
   assert.ok(f.rooms.get(roomId).endedAt !== undefined)

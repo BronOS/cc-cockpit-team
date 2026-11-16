@@ -85,8 +85,21 @@ the panel shows its open questions without Reply or Done). Lengths are counted a
 
 Per member: hired / left (with why: fired, tab closed, team ended, left), model and effort, cost USD and context % (from
 `ctx.sessions`, the status line's `costUsd` / `contextPercent`), time working / waiting for input / idle (from status
-changes, `ctx.sessions.onChange`), messages sent and received, doc reads and writes (from the room log via
+changes, `ctx.sessions.onChange`), messages sent, received and held, doc reads and writes (from the room log via
 `ctx.rooms.log` with a `seq` cursor), questions asked and the person's answer time.
+
+Cost: `costUsd` is the tab's session total, so a member's cost is the growth of that value while it is in the team. A
+hired member (join `via: 'open'`) is a new tab, whose whole value counts. A member that joined with an invite code
+(`via: 'invite'`: every coordinator after `start`, and `invite`) is an existing session: its join stores a pending
+baseline (`costBaseline` in the record, so a host restart keeps it), and the first value seen after it, in whatever
+tab, is the baseline, not cost (a re-invite in another tab sets it again). Costs wait while the room's log is not read
+to its end, since a tab can be listed as a member before its join entry (with `via`) is read; the raw value is a
+running total, so waiting loses nothing. A team recorded before this rule keeps its numbers. Context % is a level,
+and status time starts when the member's tab is first seen in the room, so neither needs a baseline.
+
+Received counts a message `delivered` to the member's tab; one `held` (paused, typed, not waiting...) counts as held.
+Rooms logs nothing when a held message is read later (`ccc room read`, or a pointer pasted at a later chance; the badge
+click is logged as a send with no `delivery`, which counts nowhere), so a held message is never moved to received.
 
 Per team: start, end, total cost, sum of member working time, the person's active time (question to reply, plus panel
 actions; a proxy, said so in the panel and export). **Marks** (`mark`, or the panel's Mark button) split cost and time

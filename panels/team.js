@@ -7,6 +7,9 @@
   const V = globalThis.TeamView
   const root = document.getElementById('root')
   const menuHost = document.getElementById('menu-host')
+  // A coordinator is usually a tab the person types in, where Rooms never pastes messages: they wait, held, until it
+  // runs `ccc room read` (the skill tells it to when it expects answers).
+  const COORDINATOR_TITLE = 'Coordinator. Its tab is usually the one you type in, so members\' messages wait (held) until it runs ccc room read.'
 
   // ---- page state ----
   let teams = []
@@ -716,7 +719,7 @@
     h('div', { class: 'cc-row-main' },
       h('span', { class: 'cc-row-title row-line' },
         h('span', { class: 'icon', 'aria-hidden': 'true' }, s.icon), h('span', { class: 'word' }, s.word),
-        h('span', {}, m.name), m.coordinator ? h('span', { class: 'cc-badge blue', title: 'Coordinator' }, '★ coordinator') : null),
+        h('span', {}, m.name), m.coordinator ? h('span', { class: 'cc-badge blue', title: COORDINATOR_TITLE }, '★ coordinator') : null),
       h('span', { class: 'cc-row-meta' }, meta.join(' · '))),
     h('span', { class: 'cc-row-actions' }, actionsBtn))
   }
@@ -738,7 +741,7 @@
       h('dl', { class: 'stats' },
         item('Elapsed', V.fmtDuration(st.elapsedMs)), item('Cost', V.fmtCost(t.costUsd)),
         item('Working', V.fmtDuration(t.workingMs)), item('Waiting', V.fmtDuration(t.waitingMs)), item('Idle', V.fmtDuration(t.idleMs)),
-        item('Messages', `${t.sent} sent, ${t.received} received`), item('Docs', `${t.docReads} read, ${t.docWrites} written`),
+        item('Messages', `${t.sent} sent, ${t.received} received, ${t.held ?? 0} held`), item('Docs', `${t.docReads} read, ${t.docWrites} written`),
         item('You', `about ${V.fmtDuration(st.personActiveMs)} (a proxy)`),
         item('Questions', `${st.questions.asked} asked, ${st.questions.answered} answered, ${st.questions.open} open`)),
       h('div', { class: 'scroll-x' }, h('table', { class: 'spans' },
