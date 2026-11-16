@@ -221,10 +221,10 @@ External review: auto
 
 ### Task 11: Verify acceptance criteria [model: sonnet]
 
-- [ ] `test/flow.test.js` complete: start, hire two, ask, reply, mark, end with export, folder checked
-- [ ] verify every design section (§2-§8) is implemented; nothing flow-shaped slipped in
-- [ ] run full test suite: `npm test`
-- [ ] `ccc plugin link` validation passes on the manifest (or the app's manifest checks, if run outside the app)
+- [x] `test/flow.test.js` complete: start, hire two, ask, reply, mark, end with export, folder checked
+- [x] verify every design section (§2-§8) is implemented; nothing flow-shaped slipped in
+- [x] run full test suite: `npm test`
+- [x] `ccc plugin link` validation (skipped - not automatable: the app's validator is not in the exported ref; checked by hand: manifest fields, `main`, panel entry and icon, skill dir all exist, skill front-matter drift-tested)
 
 ### Task 12: [Final] Update documentation [model: sonnet]
 

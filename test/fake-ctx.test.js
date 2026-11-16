@@ -185,3 +185,16 @@ test("rooms text rules follow cc-cockpit's HIDDEN_TEXT: Cf refused (but ZWNJ/ZWJ
   await assert.rejects(f.ctx.rooms.send(id, 'dev', 'x' + c(0x202e)), /rooms\.send/)
   await assert.rejects(f.ctx.rooms.create({ title: 'a' + c(0x201c) + 'b' }), /rooms\.create/)
 })
+
+test('rooms.end on an ended room resolves; an ended room keeps its members (unbound); a blank message is refused', async () => {
+  const f = fakeCtx()
+  const { id } = await f.ctx.rooms.create({ title: 'T' })
+  const { tabId } = await f.ctx.rooms.open(id, { name: 'dev' })
+  await assert.rejects(f.ctx.rooms.send(id, 'dev', '  \n'), /rooms\.send/)
+  await f.ctx.rooms.end(id)
+  await f.ctx.rooms.end(id)
+  assert.deepEqual(await f.ctx.rooms.members(id), [{ name: 'dev', coordinator: false, held: 0 }])
+  assert.equal((await f.ctx.rooms.list())[0].members, 1)
+  assert.equal(f.sessions.get(tabId).room, undefined)
+  await assert.rejects(f.ctx.rooms.send(id, 'dev', 'hi'), /rooms\.send/)
+})

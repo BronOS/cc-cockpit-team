@@ -204,9 +204,14 @@ function fakeCtx(opts = {}) {
       }))
     },
     async end(id) {
-      const r = live('rooms.end', id)
-      for (const m of r.members.values()) if (m.tabId) setSessionRoom(m.tabId, null)
-      r.members.clear()
+      // Main's endRoom is a no-op on an ended room (it resolves), and the members stay in the record as who took part
+      // (their tabs are unbound: `members` answers them with no `tabId`).
+      const r = room('rooms.end', id)
+      if (r.endedAt !== undefined) return
+      for (const m of r.members.values()) {
+        if (m.tabId) setSessionRoom(m.tabId, null)
+        delete m.tabId
+      }
       r.invites.clear()
       r.endedAt = now()
       log(r, { type: 'end', why: 'ended' })
@@ -264,6 +269,7 @@ function fakeCtx(opts = {}) {
     async send(id, to, text) {
       const r = live('rooms.send', id)
       if (typeof text !== 'string' || text.length > SEND_MAX) throw refuse('rooms.send', `at most ${SEND_MAX} characters`)
+      if (text.trim() === '') throw refuse('rooms.send', 'a message is non-empty text of at most 20000 characters')
       if (badDocText(text)) throw refuse('rooms.send', 'a message is text with no control, bidi or invisible format character but tab and line breaks')
       const recipients = to === 'all' ? [...r.members.values()] : [r.members.get(to)].filter(Boolean)
       // The room's 60 sends a minute, `all` once per recipient.
