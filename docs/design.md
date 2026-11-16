@@ -127,7 +127,7 @@ from the call's start (that catch-up included), inside the 30 s cut
 of a `ccc` call, so a too-big team fails and keeps running instead of ending unseen after exit 124; the budget and the
 call's abort signal are checked once more right before `rooms.end`. The panel has no budget.
 
-**The rule for every change** (hire, fire, invite, ask, reply, Done, mark, End, Delete, and the panel's actions, which
+**The rule for every change** (hire, fire, invite, the coordinator invite a second `start` re-issues, ask, reply, Done, mark, End, Delete, and the panel's actions, which
 go through the same functions): a change decides **all** its preconditions inside its guard (and its name lock when it
 takes one), after its last await and right before its write: the team is live and still the same record (after a
 refresh, so a room ended from core's room view counts), the member it acts for or on is (or is not, for a hire) in main's

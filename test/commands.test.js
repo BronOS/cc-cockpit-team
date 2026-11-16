@@ -544,6 +544,46 @@ test('start: a pending room that ended meanwhile is dropped, and the start makes
   assert.equal(p.f.rooms.size, 2)
 })
 
+test('start: a re-issue while the person Ends the pending team is refused inside the guard; no invite lands in the export (phase 4)', async () => {
+  const p = project()
+  await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
+  const roomId = [...p.f.rooms.keys()][0]
+  const { teams } = host.instances()
+  const invites = () => p.f.rooms.get(roomId).log.filter((e) => e.type === 'invite').length
+  const before = invites()
+  // The End holds the team (teams.guard.exclusive) from its catch-up to rooms.end: a join in that window would be in
+  // neither the metrics nor log.jsonl.
+  const r = await teams.guard.exclusive(roomId, () => p.f.run(['start', 'Build it'], { tabId: 'lead-tab' }))
+  assert.equal(r.code, 1, r.stdout)
+  assert.match(r.stderr, /being exported and ended/)
+  assert.equal(invites(), before, 'no invite minted during the export')
+  assert.equal(p.f.rooms.size, 1, 'no second room either')
+  // The entry is kept: once the End let go (here: it failed, the team runs on), the retry re-issues for the same room.
+  const retry = await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
+  assert.equal(retry.code, undefined, retry.stderr)
+  assert.match(retry.stdout, /already started team "Build it" and has not joined/)
+  assert.equal(p.f.rooms.size, 1)
+})
+
+test('start: a pending team ended while the re-issue read it is dropped inside the guard; the start makes a new team', async () => {
+  const p = project()
+  await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
+  const roomId = [...p.f.rooms.keys()][0]
+  const { ending } = host.instances()
+  // The start read the room as live and empty; the End finishes before its answer arrives (THE RULE: decided inside).
+  const held = holdNext(p.f, 'list')
+  const second = p.f.run(['start', 'Other'], { tabId: 'lead-tab' })
+  await held.reached
+  await ending.endTeam(roomId)
+  const logAt = p.f.rooms.get(roomId).log.length
+  held.release()
+  const r = await second
+  assert.equal(r.code, undefined, r.stderr)
+  assert.match(r.stdout, /team "Other" started/)
+  assert.equal(p.f.rooms.get(roomId).log.length, logAt, 'nothing reached the ended room')
+  assert.equal(p.f.rooms.size, 2)
+})
+
 test('start: after the tab joined and left (the room empty, still live), a start makes a new team', async () => {
   const p = project()
   const first = await p.f.run(['start', 'Build it'], { tabId: 'lead-tab' })
