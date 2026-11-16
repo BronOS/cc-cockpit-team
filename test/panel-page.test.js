@@ -501,8 +501,8 @@ test('select is sent once per team change; a state for another team is ignored',
 
 test('an old app\'s error is drawn with no team, and the New team button is plain while a form is open', () => {
   const p = runPage()
-  p.send({ type: 'state', teams: [], team: null, error: 'Update cc-cockpit to 0.18.1' })
-  assert.match(p.root.text, /Update cc-cockpit to 0\.18\.1/)
+  p.send({ type: 'state', teams: [], team: null, error: 'Update cc-cockpit to 0.19.1' })
+  assert.match(p.root.text, /Update cc-cockpit to 0\.19\.1/)
   assert.equal(p.button('New team').className, 'cc-primary')
   clickBtn(p, 'New team')
   assert.notEqual(p.button('New team').className, 'cc-primary')

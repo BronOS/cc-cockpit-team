@@ -228,9 +228,9 @@ External review: auto
 
 ### Task 12: [Final] Update documentation [model: sonnet]
 
-- [ ] README: what it is (tool, not flow), install, commands, panel, metrics, export, limits, "Needs cc-cockpit 0.18.1"
-- [ ] logo preview card per the marketplace convention (plugin icon card, not a screenshot)
-- [ ] move this plan to `docs/plans/completed/`
+- [x] README: what it is (tool, not flow), install, commands, panel, metrics, export, limits, "Needs cc-cockpit 0.18.1" (README states 0.19.1, the released app with Rooms and the room caps)
+- [x] logo preview card per the marketplace convention (plugin icon card, not a screenshot)
+- [x] move this plan to `docs/plans/completed/` (skipped - the harness moves the plan)
 
 ## Post-Completion
 *Items requiring manual intervention or external systems - no checkboxes, informational only*

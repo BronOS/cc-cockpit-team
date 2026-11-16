@@ -10,7 +10,7 @@ const { createMetrics } = require('../lib/metrics.js')
 const { createEnding } = require('../lib/export.js')
 const { createPanel } = require('../lib/panel.js')
 
-const OLD_APP = 'Team needs cc-cockpit 0.18.1 or newer (Rooms): update the app.'
+const OLD_APP = 'Team needs cc-cockpit 0.19.1 or newer (Rooms): update the app.'
 
 let disposers = []
 let metrics = null

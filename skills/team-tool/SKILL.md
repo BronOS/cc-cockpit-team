@@ -8,7 +8,7 @@ description: Use when asked to start, run or inspect a team of Claude tabs with 
 `ccc team` is a tool for a group of Claude tabs working in one cc-cockpit room (a team). It starts the team, opens
 members from a kickoff file, takes their questions to the person, records cost and time, and exports the result. It
 decides nothing about how the work is done: what a member is told, who does what and in what order is up to the person
-and the kickoff files. Run `ccc team help` for the commands. Needs cc-cockpit 0.18.1.
+and the kickoff files. Run `ccc team help` for the commands. Needs cc-cockpit 0.19.1.
 
 ## Commands
 
