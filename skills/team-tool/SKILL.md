@@ -36,7 +36,7 @@ Rooms' own words.
   run `ccc room read`. Run it when you expect answers (after asking members for something, or when they should have
   reported); nothing will interrupt you with them. A second `start` from a tab that has not joined yet
   re-issues the invite for the room already started, with its old title and name.
-- `hire` opens the first three members as split panes beside your tab (you left, members stacked on the right; the person's layout setting may differ); later ones open as plain tabs. The output says which it was.
+- `hire` opens members as split panes beside your tab (you left, members stacked evenly on the right; the person's layout setting may differ) while the app places them: how many fit is the person's "Panes a plugin may fill in a group" limit (default 4 panes, your tab included) and the window's size. Past that a member opens as a plain tab. The output says which it was.
 - `hire` (coordinator) stores the kickoff file as the doc `members/<name>/kickoff.md` and opens a new Claude tab in the
   team. The tab's first prompt is the kickoff text itself, under a short header naming the team, the member, whether it
   is a coordinator, and the doc. It goes in the prompt because auto mode treats a doc a tab reads with a tool as data,
