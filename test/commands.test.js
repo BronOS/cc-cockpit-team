@@ -883,11 +883,11 @@ async function hireAll(p, names) {
   }
 }
 
-test('hire: column (default): members stack below one another on the right; the 4th other member is plain once the group is full', async () => {
+test('hire: column (default): members stack below one another on the right; the 4th other member is plain once the app refuses', async () => {
   const p = await started()
   await hireAll(p, ['a', 'b', 'c'])
   const rd = await p.f.run(['hire', 'd', '--kickoff', 'kick/dev.md'], p.lead)
-  assert.match(rd.stdout, /plain tab \(the group is full\)/)
+  assert.match(rd.stdout, /plain tab \(the app did not place it: the group is full or a pane would be too small\)/)
   const tabOf = (n) => p.f.rooms.get(p.roomId).members.get(n).tabId
   assert.deepEqual(placeOf(p.f, 'a'), { beside: 'lead-tab', side: 'right' })
   assert.deepEqual(placeOf(p.f, 'b'), { beside: tabOf('a'), side: 'down' })
