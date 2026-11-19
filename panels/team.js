@@ -726,7 +726,9 @@
               if (!replying.has(key)) reply(roomId, q)
             },
           }),
-          btn(busy ? 'Working…' : 'Done', () => done(roomId, q), { class: 'cc-ghost', disabled: busy, title: 'Close it without an answer' })))
+          // Send as well as Enter: a phone's keyboard in a browser view has no Enter that reaches keydown reliably.
+          btn(busy ? 'Working…' : 'Send', () => reply(roomId, q), { disabled: busy, title: 'Send the answer (Enter)' }),
+          btn('Done', () => done(roomId, q), { class: 'cc-ghost', disabled: busy, title: 'Close it without an answer' })))
     })
     return h('section', { class: 'attn' + (ended ? ' muted' : ''), 'aria-label': 'Waiting on you' },
       h('div', { class: 'attn-h' }, h('span', { 'aria-hidden': 'true' }, '? '), `Waiting on you · ${qs.length}`), cards)
