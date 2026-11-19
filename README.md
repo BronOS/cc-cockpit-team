@@ -1,7 +1,9 @@
 # Team
 
-A cc-cockpit plugin (`bronos.team`) for running a team of Claude tabs on core Rooms. Needs cc-cockpit 0.19.1 or newer
-(Rooms, and the room caps as settings). An older app answers `ccc team` with an update message.
+A cc-cockpit plugin (`bronos.team`) for running a team of Claude tabs on core Rooms. Needs cc-cockpit 0.22.0 or newer
+for everything it does: Rooms (0.19.1; an older app answers `ccc team` with an update message), members as split panes
+beside the coordinator (0.20.0, 0.21.2 for a tall column) and End closing the hired members' tabs (0.22.0). On an app
+between 0.19.1 and 0.22.0 it still runs, with members in plain tabs and their tabs left open.
 
 It is a **tool, not a flow**. It starts a team (one room), hires members as Claude tabs from a kickoff file, takes
 their questions to you, measures cost and time, and exports the result. It has no roles, personas, phases or review
@@ -104,15 +106,10 @@ and folders 0700, and a failed export leaves the team running. From `ccc` the ex
 
 Note: `dist/host.js` is hand-maintained source (there is no build step), not a bundle.
 
-Written against the Rooms API of cc-cockpit 0.19.1 and its source, with a fake `ctx` in the tests. It has not been run
-against the live app beyond loading (`ccc plugin list` shows it ok, `ccc team help` answers). The room log's field
-names the metrics read (`send`, `join`, `leave`, `doc-read`, `doc-write`, `end` and their members) come from the
-source and may not match every entry in practice; the panel, a real ask and reply, the export folder and a restart
-with a paused room have not been tried. The panel page is tested against a hand-made DOM stub only, never in a real
-browser: focus, scroll and selection kept across a state, `<details>`, `<select>` and the clipboard, and the page under
-the app's CSP are unchecked, and so is `ccc plugin link`'s manifest check (the fields were checked by hand). The fake
-`ctx` is the tests' only picture of Rooms: refusal texts and log fields beyond `seq`, `at` and `type` are read from
-the source, not from a running app.
+Tested with a fake `ctx` (the tests' picture of Rooms) and run live on cc-cockpit 0.22.0: starting a team, hiring
+members as split panes (a column of six), questions asked and answered in the panel, End closing the hired members'
+tabs, and a team left paused across an app restart. Not yet tried live: the export folder and the metrics against a
+long real room log (the log field names the metrics read come from the app's source).
 
 Design: `docs/design.md`.
 

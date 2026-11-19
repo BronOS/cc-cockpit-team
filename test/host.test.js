@@ -110,7 +110,7 @@ test('manifest: id, version, cli, panel, skill, setting, description names the a
   assert.equal(m.contributes.panels[0].defaultZone, 'right')
   assert.equal(m.contributes.skills[0].id, 'team-tool')
   assert.equal(m.contributes.settings.app.properties.exportDir.default, '')
-  assert.match(m.description, /Needs cc-cockpit 0\.19\.1/)
+  assert.match(m.description, /Needs cc-cockpit 0\.22\.0/)
   for (const f of [m.main, m.contributes.panels[0].entry, m.contributes.panels[0].icon, m.contributes.skills[0].dir + '/SKILL.md']) {
     assert.ok(fs.existsSync(path.join(__dirname, '..', f)), f)
   }
