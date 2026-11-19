@@ -598,11 +598,12 @@ function fakeCtx(opts = {}) {
     /**
      * A message from the panel's page in `view` ('desktop' or `web:<n>`), as the app hands it to the host's
      * `ctx.panels.onMessage` listener (JSON round trip, `{ view }` second). Returns the listener's promise.
+     * `access`: main's tag for that view on an app with guests ('owner', 'read', 'write'); absent, as an older app.
      */
-    page(message, view = 'desktop', panelId = 'team') {
+    page(message, view = 'desktop', panelId = 'team', access) {
       const fn = panelListeners.get(panelId)
       if (!fn) throw new Error(`no listener on panel ${panelId}`)
-      return fn(JSON.parse(JSON.stringify(message)), { view })
+      return fn(JSON.parse(JSON.stringify(message)), { view, ...(access !== undefined ? { access } : {}) })
     },
     /** Pause or resume a room, as the person (or the loop guard) would. */
     setPaused(roomId, paused) {
