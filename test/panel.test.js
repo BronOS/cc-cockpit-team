@@ -1195,6 +1195,8 @@ test('a guest reads the state, the activity, the docs and a doc; the export fold
   s.f.ctx.settings.app = { exportDir: '/Users/owner/exports' }
   const { roomId } = await team(s)
   await s.f.ctx.rooms.docs.put(roomId, 'shared/plan.md', 'the plan')
+  await settle()
+  const counted = (await s.inst.teams.get(roomId)).metrics.actions.length
   for (const [view, access] of [['web:2', 'read'], ['web:3', 'write']]) {
     await s.f.page({ type: 'select', roomId }, view, 'team', access)
     const st = postsOf(s.f, 'state', view).at(-1)
@@ -1206,6 +1208,9 @@ test('a guest reads the state, the activity, the docs and a doc; the export fold
     const doc = await actAs(s.f, { type: 'doc', roomId, path: 'shared/plan.md' }, view, access)
     assert.equal(doc.text, 'the plan')
   }
+  // A guest's reads are nobody's activity (the person's time is the owner's).
+  await settle()
+  assert.equal((await s.inst.teams.get(roomId)).metrics.actions.length, counted)
   // The owner's view (tagged, or untagged as on an older app) keeps the folder.
   await s.f.page({ type: 'hello', selected: roomId }, 'web:4', 'team', 'owner')
   assert.equal(postsOf(s.f, 'state', 'web:4').at(-1).exportDir, '/Users/owner/exports')
@@ -1265,4 +1270,28 @@ test("the header's New team opens the form only for the owner's click, never a g
   click('new-team', { view: 'web:4', access: 'owner' })
   click('new-team', { view: 'desktop' })
   assert.deepEqual(forms().map(([, , o]) => o && o.view), ['web:4', 'desktop'])
+})
+
+test("no owner path reaches a guest: a hire with a cwd and an export, then the guest's state, activity and docs", async () => {
+  const s = setup()
+  const out = tmp()
+  s.f.ctx.settings.app = { exportDir: out }
+  const sub = path.join(s.dir, 'sub')
+  fs.mkdirSync(sub)
+  const { roomId } = await team(s)
+  const h = await act(s.f, { type: 'hire', roomId, name: 'qa', kickoff: 'dev.md', cwd: sub })
+  assert.equal(h.ok, true, h.error)
+  const live = await team(s)
+  const ended = await act(s.f, { type: 'end', roomId })
+  assert.equal(ended.ok, true, ended.error)
+  for (const rid of [roomId, live.roomId]) {
+    const before = s.f.posts.length
+    await s.f.page({ type: 'select', roomId: rid }, 'web:8', 'team', 'read')
+    const seen = [postsOf(s.f, 'state', 'web:8').at(-1)]
+    seen.push(await actAs(s.f, { type: 'activity', roomId: rid }, 'web:8', 'read'))
+    seen.push(await actAs(s.f, { type: 'docs', roomId: rid }, 'web:8', 'read'))
+    const text = JSON.stringify(seen) + JSON.stringify(s.f.posts.slice(before).filter(([, , o]) => o && o.view === 'web:8'))
+    assert.ok(!text.includes(out), `export folder in ${rid}`)
+    assert.ok(!text.includes(s.dir), `project folder in ${rid}`)
+  }
 })
