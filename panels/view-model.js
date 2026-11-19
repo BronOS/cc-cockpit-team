@@ -271,6 +271,8 @@
     capped: "it had 5 pointers in a row (click the tab's badge)",
     draft: 'its tab has a half-typed prompt',
     'not-waiting': 'it is busy; it gets the pointer when it waits again',
+    // cc-cockpit after 0.23: an idle tab (e.g. compacted outside a turn) takes nothing until someone types there.
+    idle: "its tab is idle and will not take it by itself (type ccc room read and Enter in that tab, or click its badge)",
   }
 
   /** The notice after a reply: `{ text, held }` from the host's per-recipient answers (one recipient). */

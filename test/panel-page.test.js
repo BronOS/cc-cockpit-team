@@ -139,7 +139,7 @@ test('reply outcome: delivered is "sent"; held says so, with why, as a warning',
   const paused = V.replyOutcome('dev', [{ to: 'dev', path: 'held', why: 'paused' }])
   assert.equal(paused.held, true)
   assert.match(paused.text, /^Answer queued for dev, not yet pointed out to it: the room is paused/)
-  for (const why of ['no-tab', 'typed', 'capped', 'draft', 'not-waiting']) {
+  for (const why of ['no-tab', 'typed', 'capped', 'draft', 'not-waiting', 'idle']) {
     const o = V.replyOutcome('dev', [{ to: 'dev', path: 'held', why }])
     assert.equal(o.held, true, why)
     assert.doesNotMatch(o.text, new RegExp(`: ${why}\\.$`), why)
