@@ -103,7 +103,7 @@ test('deactivate unregisters the handler', () => {
 test('manifest: id, version, cli, panel, skill, setting, description names the app version', () => {
   const m = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin.json'), 'utf8'))
   assert.equal(m.id, 'bronos.team')
-  assert.equal(m.version, '0.1.1')
+  assert.equal(m.version, '0.1.2')
   assert.equal(m.contributes.cli[0].name, 'team')
   assert.equal(m.contributes.cli[0].stdin, true)
   assert.equal(m.contributes.cli[0].stdinDash, true)

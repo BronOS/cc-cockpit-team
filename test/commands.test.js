@@ -974,3 +974,30 @@ test('hire: an older app ignores beside and answers no placed; the hire works', 
   await hireAll(p, ['a', 'b'])
   assert.ok(p.f.rooms.get(p.roomId).members.has('b'))
 })
+
+test('hire --env: passed to rooms.open as an object, repeatable; the output names what the app applied', async () => {
+  const { f, lead } = await started()
+  const r = await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md', '--env', 'CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1', '--env=OTHER_X=a=b'], lead)
+  assert.equal(r.code, undefined, r.stderr)
+  assert.deepEqual(f.opens.find((o) => o.name === 'dev').env, { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: '1', OTHER_X: 'a=b' })
+  assert.match(r.stdout, /\(env: CLAUDE_CODE_EXPERIMENTAL_CODE_MODE, OTHER_X\)\n$/)
+})
+
+test('hire --env on an app that ignores it: the member is hired, the output warns', async () => {
+  const { f, lead } = await started({ noEnv: true })
+  const r = await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md', '--env', 'CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1'], lead)
+  assert.equal(r.code, undefined, r.stderr)
+  assert.match(r.stdout, /warning: this app ignored --env \(needs cc-cockpit 0\.23\.0\): it runs without CLAUDE_CODE_EXPERIMENTAL_CODE_MODE/)
+})
+
+test('hire --env: a bad shape, a control character or a name twice is a usage error before anything opens', async () => {
+  const { f, lead } = await started()
+  for (const bad of [['--env', 'lower=1'], ['--env', '=1'], ['--env', 'NOEQ'], ['--env', 'A=x\u0007'], ['--env', 'A=1', '--env', 'A=2'], ['--env', 'A=' + 'x'.repeat(257)]]) {
+    const r = await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md', ...bad], lead)
+    assert.equal(r.code, 2, `${JSON.stringify(bad)}: ${r.stderr}`)
+  }
+  assert.equal(f.opens.filter((o) => o.name === 'dev').length, 0)
+  const plain = await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md'], lead)
+  assert.doesNotMatch(plain.stdout, /env/)
+  assert.equal('env' in f.opens.find((o) => o.name === 'dev'), false)
+})

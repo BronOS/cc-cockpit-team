@@ -1,7 +1,7 @@
 {
   "id": "bronos.team",
   "name": "Team",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "api": 1,
   "description": "Run a team of Claude tabs on cc-cockpit Rooms: start a team, hire members from a kickoff file, hear their questions, watch cost and time, export the result. A tool, not a flow. Needs cc-cockpit 0.22.0 (Rooms from 0.19.1).",
   "author": "Oleg Bronzov",
@@ -12,7 +12,7 @@
       {
         "name": "team",
         "summary": "Start and run a team of Claude tabs (one room)",
-        "usage": "team start \"<title>\" [--as <name>] | hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--coordinator] | invite <name> [--coordinator] | fire <name> | ask \"<question>\" | ask - | mark \"<label>\" | list [--json] | stats [--json] | end [--export <dir>] | help",
+        "usage": "team start \"<title>\" [--as <name>] | hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--env NAME=value]... [--coordinator] | invite <name> [--coordinator] | fire <name> | ask \"<question>\" | ask - | mark \"<label>\" | list [--json] | stats [--json] | end [--export <dir>] | help",
         "stdin": true,
         "stdinDash": true
       }

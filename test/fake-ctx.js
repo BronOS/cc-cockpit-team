@@ -282,13 +282,15 @@ function fakeCtx(opts = {}) {
       const place = opts.noBeside ? undefined : checkBeside('rooms.open', options.beside, options.side)
       const { tabId, cwd } = openTab('rooms.open', options)
       const placed = place === undefined ? undefined : placeTab(tabId, place)
+      // `env` (app 0.23.0): the names applied; an older app (`opts.noEnv`) ignores it and answers without `env`.
+      const env = options.env !== undefined && !opts.noEnv ? Object.keys(options.env) : undefined
       const m = { name: options.name, coordinator: options.coordinator === true, tabId, held: 0, opened: true }
       r.members.set(m.name, m)
       setSessionRoom(tabId, r, m)
       opens.push({ via: 'rooms.open', roomId: id, tabId, ...structuredClone(options), cwd })
       log(r, { type: 'join', member: m.name, coordinator: m.coordinator, via: 'open' })
       emitSessions()
-      return placed === undefined ? { tabId } : { tabId, placed }
+      return { tabId, ...(placed === undefined ? {} : { placed }), ...(env ? { env } : {}) }
     },
     async invite(id, options = {}) {
       const r = live('rooms.invite', id)

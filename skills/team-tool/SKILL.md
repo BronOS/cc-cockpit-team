@@ -14,7 +14,7 @@ and the kickoff files. Run `ccc team help` for the commands. Needs cc-cockpit 0.
 
 ```
 ccc team start "<title>" [--as <name>]
-ccc team hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--coordinator]
+ccc team hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--env NAME=value]... [--coordinator]
 ccc team invite <name> [--coordinator]
 ccc team fire <name>
 ccc team ask "<question>"
@@ -37,6 +37,7 @@ Rooms' own words.
   reported); nothing will interrupt you with them. A second `start` from a tab that has not joined yet
   re-issues the invite for the room already started, with its old title and name.
 - `hire` opens members as split panes beside your tab (you left, members stacked evenly on the right; the person's layout setting may differ) while the app places them: how many fit is the person's "Panes a plugin may fill in a group" limit (default 4 panes, your tab included) and the window's size. Past that a member opens as a plain tab. The output says which it was.
+- `hire --env NAME=value` (repeatable) starts the member with that environment variable. The app allows only the names on its own list, with checked values (cc-cockpit 0.23.0: `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`, Claude Code's Code Mode, which turns off the browser tool and computer use in that tab); anything else refuses the hire. The variables stay with the tab across restarts. An older app ignores them, and the output warns.
 - `hire` (coordinator) stores the kickoff file as the doc `members/<name>/kickoff.md` and opens a new Claude tab in the
   team. The tab's first prompt is the kickoff text itself, under a short header naming the team, the member, whether it
   is a coordinator, and the doc. It goes in the prompt because auto mode treats a doc a tab reads with a tool as data,

@@ -19,7 +19,7 @@ If the experimental plugin of the same id (`bronos.team`) is linked, unlink it f
 
 ```
 start "<title>" [--as <name>]
-hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--coordinator]
+hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--env NAME=value]... [--coordinator]
 invite <name> [--coordinator]
 fire <name>
 ask "<question>"   |   ask -
