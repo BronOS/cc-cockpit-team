@@ -68,6 +68,8 @@ dl, dd, dt { margin: 0; }
 .m .name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--cc-space-1); min-width: 0; }
 .m .nm { font-weight: 700; overflow-wrap: anywhere; }
 .m .star { color: var(--cc-accent); font-size: var(--cc-text-s); }
+/* The person's stars: a pill with a count, so it never reads as the coordinator's lone star. */
+.m .stars { font-size: var(--cc-text-s); font-weight: 700; padding: 0 var(--cc-space-1); border: 1px solid var(--cc-accent); border-radius: 999px; color: var(--cc-accent); white-space: nowrap; cursor: default; }
 .m .word { font-size: var(--cc-text-s); color: var(--cc-fg-muted); white-space: normal; }
 .m .attn-word { color: var(--cc-status-needs-permission); font-weight: 700; }
 .m .right { grid-row: span 2; text-align: right; display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }

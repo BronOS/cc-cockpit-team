@@ -390,6 +390,22 @@ test('the page renders a state as text, with icons and words, and asks for what 
   assert.ok(p.posts.some((m) => m.type === 'select' && m.roomId === 'r1'))
 })
 
+test('a member\'s stars are a count badge with the reasons in its tooltip, kept on a former member\'s row', () => {
+  const p = runPage()
+  p.connect()
+  p.send(teamState({ team: null }))
+  const base = teamState()
+  const stars = [{ at: 1, reason: 'fixed <the> race', by: 'lead' }, { at: 2, reason: 'tests first', by: 'lead' }]
+  p.send({ ...base, team: { ...base.team, members: [...base.team.members, { name: 'old', coordinator: false, in: false, status: 'left', leftWhy: 'fired', held: 0, costUsd: 0, workingMs: 0, contextPercent: null, stars }] } })
+  const [badge] = p.find((e) => e.className === 'stars')
+  assert.ok(badge, 'a badge for the starred member')
+  assert.equal(badge.attrs.title, '2 stars from the person:\n• fixed <the> race (by lead)\n• tests first (by lead)')
+  assert.match(badge.text, /✦ 2 2 stars/)
+  // Only the starred member has one; the coordinator's ★ stays its own mark.
+  assert.equal(p.find((e) => e.className === 'stars').length, 1)
+  assert.match(p.root.text, /★ coordinator/)
+})
+
 test('a log move asks nothing while the sections are closed', () => {
   const p = runPage()
   p.connect()

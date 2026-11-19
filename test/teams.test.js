@@ -487,11 +487,11 @@ test('every teams instance has its own export guard', () => {
   assert.notEqual(a.guard, createTeams(f.ctx).guard)
 })
 
-test('name locks: reply, ask and mark of one name run together; hire and fire are alone and refuse them (and are refused)', async () => {
+test('name locks: reply, ask, mark and star of one name run together; hire and fire are alone and refuse them (and are refused)', async () => {
   const names = createNameLocks()
   let release
   const gate = new Promise((r) => (release = r))
-  const kinds = ['reply', 'ask', 'mark']
+  const kinds = ['reply', 'ask', 'mark', 'star']
   const running = kinds.map((k) => names.hold('r1', 'dev', k, () => gate))
   // Every member-stays kind may join the others; a hire or a fire is refused while any of them holds the name.
   for (const k of kinds) assert.equal(await names.hold('r1', 'dev', k, async () => k), k)
