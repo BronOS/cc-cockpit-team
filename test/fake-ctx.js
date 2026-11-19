@@ -313,14 +313,23 @@ function fakeCtx(opts = {}) {
         held: m.held,
       }))
     },
-    async remove(id, name) {
+    // `closeTab` (app 0.24.0, main's room-service.ts removeOwned): closes the member's tab under end's rule (opened by the
+    // app, not a coordinator, not typed in) and answers { closed }; an older app (`opts.noRemoveClose`) ignores it and answers nothing.
+    async remove(id, name, options) {
       const r = live('rooms.remove', id)
       const m = r.members.get(name)
       if (!m) throw refuse('rooms.remove', `no member ${name}`)
+      const s = m.tabId ? sessions.get(m.tabId) : undefined
+      const close = options?.closeTab === true && !opts.noRemoveClose && m.opened && !m.coordinator && s && !s.typed
       r.members.delete(name)
       if (m.tabId) setSessionRoom(m.tabId, null)
       log(r, { type: 'leave', member: name, why: 'removed', dropped: m.held })
+      if (close) {
+        sessions.delete(m.tabId)
+        closedTabs.push(m.tabId)
+      }
       emitSessions()
+      return opts.noRemoveClose ? undefined : { closed: close ? 1 : 0 }
     },
     async send(id, to, text) {
       const r = live('rooms.send', id)

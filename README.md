@@ -34,7 +34,7 @@ help
   the one you type in, and Rooms never pastes messages into such a tab: members' reports wait, held (the badge on its
   tab), until the coordinator runs `ccc room read`, which the skill tells it to do when it expects answers. Members
   should not expect an immediate reaction.
-- `fire` removes a member from the room; its tab stays open.
+- `fire` removes a member from the room and closes the tab its hire opened (cc-cockpit 0.24.0; a tab you typed in, a coordinator's and an invited member's stay open, and so does every tab on an older app).
 - `end` ends the room and closes the tabs the hire opened (app 0.22.0 and later); a coordinator's tab, an invited tab and a tab you typed in stay.
 - A hired member opens as a split pane beside the coordinator's tab. Default layout "column": the coordinator on the
   left, the members stacked on the right in hire order, each below the previous one, as many as the app's pane limit

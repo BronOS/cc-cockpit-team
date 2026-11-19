@@ -386,19 +386,40 @@ test('invite: a one-time code; a coordinator invite; a taken name passes Rooms t
   assert.equal((await f.run(['invite'], lead)).code, 2)
 })
 
-test('fire: removes the member, its tab stays; an unknown name passes Rooms through', async () => {
+test('fire: removes the member and closes the tab its hire opened; an unknown name passes Rooms through', async () => {
   const { f, roomId, lead } = await started()
   await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md'], lead)
   const devTab = f.opens.find((o) => o.name === 'dev').tabId
   const r = await f.run(['fire', 'dev'], lead)
   assert.equal(r.code, undefined, r.stderr)
-  assert.match(r.stdout, /fired dev: its tab stays open/)
+  assert.match(r.stdout, /fired dev: its tab is closed/)
   assert.equal(f.rooms.get(roomId).members.has('dev'), false)
-  assert.ok(f.sessions.has(devTab))
+  assert.ok(!f.sessions.has(devTab))
+  assert.deepEqual(f.closedTabs, [devTab])
   assert.equal((await f.run(['list'], { tabId: devTab })).stderr, NOT_IN_TEAM + '\n')
   const gone = await f.run(['fire', 'dev'], lead)
   assert.equal(gone.code, 1)
   assert.match(gone.stderr, /^rooms\.remove: no member dev/)
+})
+
+test('fire keeps a tab the person typed in, and on an app before 0.24.0 every tab stays', async () => {
+  const { f, roomId, lead } = await started()
+  await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md'], lead)
+  const devTab = f.opens.find((o) => o.name === 'dev').tabId
+  f.emitSession({ tabId: devTab, status: 'waiting', typed: true })
+  const r = await f.run(['fire', 'dev'], lead)
+  assert.equal(r.code, undefined, r.stderr)
+  assert.match(r.stdout, /fired dev: its tab stays open/)
+  assert.ok(f.sessions.has(devTab))
+  assert.deepEqual(f.closedTabs, [])
+  assert.equal(f.rooms.get(roomId).members.has('dev'), false)
+  const old = await started({ noRemoveClose: true })
+  await old.f.run(['hire', 'dev', '--kickoff', 'kick/dev.md'], old.lead)
+  const oldTab = old.f.opens.find((o) => o.name === 'dev').tabId
+  const o = await old.f.run(['fire', 'dev'], old.lead)
+  assert.equal(o.code, undefined, o.stderr)
+  assert.match(o.stdout, /fired dev: its tab stays open/)
+  assert.ok(old.f.sessions.has(oldTab))
 })
 
 test('list: any member; text and --json with status, held, paused', async () => {

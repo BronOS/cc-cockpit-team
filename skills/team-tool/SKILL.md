@@ -49,7 +49,7 @@ Rooms' own words.
   repeated or unknown option is a usage error (exit 2). The tool never reads what the kickoff says. A name already in
   the team is refused. `--cwd` is resolved against your cwd and Rooms checks it.
 - `invite` (coordinator) prints a one-time code for an existing tab to join with `ccc room join <code>`.
-- `fire` (coordinator) removes a member, not yourself (ask another coordinator, or end the team); its tab stays open.
+- `fire` (coordinator) removes a member, not yourself (ask another coordinator, or end the team); its tab is closed when its hire opened it and nobody typed in it (cc-cockpit 0.24.0; on an older app, or after the person typed in it, the tab stays open).
 - `ask` (any member) records a question to the person, raises a notice and prints the question's id. The text may come
   on stdin with `ask -`. A member cannot message the person in Rooms; this is the way. The person answers in the Team
   panel: a reply arrives as a room message from the plugin that starts `Answer to your question <id>:`, read with
