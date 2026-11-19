@@ -650,10 +650,10 @@
     return h('section', {},
       // Whatever the selection: an old app's answer ("update the app") must not wait for a failed submit.
       stateError ? h('div', { class: 'cc-error-line', role: 'alert' }, stateError) : null,
-      h('div', { class: 'head' }, h('h3', {}, 'Teams'), btn('New team', () => openForm('new-team'), { class: form ? null : 'cc-primary' })),
+      // No heading row of its own: the panel's title bar says "Team" and carries New team as its + action (lib/panel.js).
       rows.length
         ? h('ul', { class: 'cc-list', role: 'listbox', 'aria-label': 'Teams' }, rows)
-        : h('div', { class: 'cc-empty' }, h('p', {}, 'No teams yet. Start one here, or run `ccc team start "<title>"` from a Claude tab.')))
+        : h('div', { class: 'cc-empty' }, h('p', {}, 'No teams yet. Start one with + in the panel\'s title bar, or run `ccc team start "<title>"` from a Claude tab.')))
   }
 
   function group(name, title, count, body) {
@@ -863,7 +863,11 @@
   ccPanel.onMessage((msg) => {
     if (!msg || typeof msg !== 'object') return
     if (msg.type === 'state') applyState(msg)
-    else if (msg.type === 'result') {
+    // The title bar's + (ctx.panels.onAction, lib/panel.js), as the old in-page button: it replaces another form, but a
+    // New team form already open keeps what was typed in it.
+    else if (msg.type === 'new-team') {
+      if (!form || form.kind !== 'new-team') openForm('new-team')
+    } else if (msg.type === 'result') {
       const cb = pending.get(msg.req)
       if (cb) {
         pending.delete(msg.req)

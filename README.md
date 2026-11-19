@@ -60,7 +60,7 @@ help
 
 Teams list and a team page: members with status, cost and a menu (focus tab, fire, copy invite); open questions with
 Reply and Done; Hire, Mark, Copy invite, End and Delete; and the team's activity (the room log, filtered by member and
-kind) and docs, shown when opened. New team takes a title, an optional lead kickoff file, model, effort and folder.
+kind) and docs, shown when opened. New team (the + in the panel's title bar) takes a title, an optional lead kickoff file, model, effort and folder.
 Destructive steps ask in the page.
 
 ## Metrics

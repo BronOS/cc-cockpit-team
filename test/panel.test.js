@@ -1157,3 +1157,24 @@ test('the host wires the panel on its shared instances and stops it on deactivat
   await host.deactivate()
   assert.equal(f.panelListeners.has('team'), false)
 })
+
+test('New team is the title bar\'s + action: a click opens the form in the clicking view, or every view when none is named', async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'team-head-')))
+  try {
+    const f = fakeCtx({ projectDir: dir })
+    host.activate(f.ctx)
+    assert.deepEqual(f.headers.get('team'), { actions: [{ id: 'new-team', icon: 'add', title: 'New team' }] })
+    const click = f.actionListeners.get('team')
+    const before = f.posts.length
+    click('new-team', { view: 'web:3' })
+    click('new-team')
+    click('something-else')
+    assert.deepEqual(f.posts.slice(before), [
+      ['team', { type: 'new-team' }, { view: 'web:3' }],
+      ['team', { type: 'new-team' }, undefined],
+    ])
+  } finally {
+    host.deactivate()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

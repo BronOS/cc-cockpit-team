@@ -559,14 +559,19 @@ test('select is sent once per team change; a state for another team is ignored',
   assert.match(p.root.text, /Loading the team/)
 })
 
-test('an old app\'s error is drawn with no team, and the New team button is plain while a form is open', () => {
+test('an old app\'s error is drawn with no team; New team is the title bar\'s +, not a button in the page', () => {
   const p = runPage()
   p.send({ type: 'state', teams: [], team: null, error: 'Update cc-cockpit to 0.19.1' })
   assert.match(p.root.text, /Update cc-cockpit to 0\.19\.1/)
-  assert.equal(p.button('New team').className, 'cc-primary')
-  clickBtn(p, 'New team')
-  assert.notEqual(p.button('New team').className, 'cc-primary')
+  assert.equal(p.find((e) => e.tag === 'button' && e.text === 'New team').length, 0)
+  p.send({ type: 'new-team' })
+  assert.match(p.root.text, /Start team/)
   assert.equal(p.find((e) => e.className === 'cc-primary').length, 1, 'one primary: Start team')
+  // A second + keeps the open New team form (and what was typed in it).
+  const input = p.find((e) => e.tag === 'input')[0]
+  typeInto(p, input, 'Checkout')
+  p.send({ type: 'new-team' })
+  assert.equal(p.find((e) => e.tag === 'input')[0].value, 'Checkout')
 })
 
 test('open sections: a log move re-asks the activity and the docs list, never a doc text', async () => {
@@ -889,7 +894,7 @@ for (const [how, move] of Object.entries(switches)) {
     // The New team form is no team's: it stays.
     const st = twoTeams()
     const p = start(st)
-    clickBtn(p, 'New team')
+    p.send({ type: 'new-team' })
     move(p, st)
     assert.match(p.root.text, /Start team/)
   })

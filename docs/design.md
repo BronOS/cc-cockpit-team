@@ -213,7 +213,7 @@ One panel, "Team", per window; state always marked with an icon or a word, never
 - **Activity**: the room log newest first, marks included, filterable by member and by kind.
 - **Docs**: the list; a click shows the doc read-only in the panel (`ctx.rooms.docs.get`; there is no API to open
   core's room view, which the person reaches from the tab strip).
-- Actions: New team, Hire…, Mark, End and export, Delete (ended teams).
+- Actions: New team (the + in the panel's title bar, `ctx.panels.header`; the page has no heading row of its own), Hire…, Mark, End and export, Delete (ended teams).
 Core's room view (messages, docs, remove, pause and resume) is not duplicated.
 What the page has open for a team (a member menu, a form or confirm, a reply in flight) is bound to that team: any
 change of the selection (a click, the auto-select after the team is deleted or ended elsewhere) closes the menu and the
