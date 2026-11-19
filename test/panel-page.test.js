@@ -291,7 +291,7 @@ function stubDom() {
   return { document, root, menuHost, docListeners, El, Node_ }
 }
 
-function runPage() {
+function runPage(opts = {}) {
   const vm = require('node:vm')
   const { document, root, menuHost, docListeners, Node_ } = stubDom()
   const posts = []
@@ -314,6 +314,8 @@ function runPage() {
       },
       onMessage: (f) => { onMessage = f },
       onConnect: (f) => { onConnect = f },
+      // The SDK's view (cc-cockpit's ccPanel.view): `access` only on an app with guests.
+      ...(opts.view ? { view: opts.view } : {}),
     },
     setTimeout: (f, ms) => { timers.push({ f, ms, active: true }); return timers.length },
     clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].active = false },
@@ -1062,4 +1064,31 @@ test('the delete confirm closes when an end elsewhere auto-selects another team;
   q.answer(q.posts.find((m) => m.type === 'fire'), { ok: true, name: 'api' })
   await tick(q)
   assert.equal(q.sent('fire').length, 1)
+})
+
+test("a guest's page (ccPanel.view.access, a hint) shows the team with no action: no bar, no answer box, no member actions", () => {
+  for (const access of ['read', 'write']) {
+    const p = runPage({ view: { remote: true, access } })
+    p.send(teamState({ team: null }))
+    p.send(teamState())
+    // What the owner sees is there...
+    assert.match(p.root.text, /ok\?/)
+    assert.match(p.root.text, /lead/)
+    // ...and nothing to act with.
+    for (const label of ['+ Hire', 'Mark', 'Invite', 'End…', 'Send', 'Done']) assert.equal(p.button(label), undefined, `${access} ${label}`)
+    assert.equal(p.find((e) => e.tag === 'textarea').length, 0)
+    assert.equal(memberRow(p, 'lead'), undefined)
+    assert.equal(p.find((e) => e.tag === 'button' && e.attrs.title === 'Actions for lead').length, 0)
+    // The host's New team (a click on the header) opens no form here.
+    p.send({ type: 'new-team' })
+    assert.doesNotMatch(p.root.text, /New team/)
+  }
+  // The owner's page (or an older app's, no access) is unchanged.
+  for (const view of [{ remote: true, access: 'owner' }, undefined]) {
+    const p = runPage(view ? { view } : {})
+    p.send(teamState({ team: null }))
+    p.send(teamState())
+    assert.ok(p.button('+ Hire'))
+    assert.ok(memberRow(p, 'lead'))
+  }
 })

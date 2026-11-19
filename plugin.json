@@ -7,6 +7,7 @@
   "author": "Oleg Bronzov",
   "license": "MIT",
   "main": "dist/host.js",
+  "guests": { "aware": true },
   "contributes": {
     "cli": [
       {

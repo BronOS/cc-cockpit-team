@@ -66,6 +66,15 @@ context and held messages per member, a menu to focus the tab, fire or copy an i
 kind), Docs and Numbers. New team (the + in the panel's title bar) takes a title, an optional lead kickoff file, model, effort and folder.
 Destructive steps ask in the page.
 
+## Guests
+
+When the owner shows Team to guests they invited (cc-cockpit's guest invites; Settings > Plugins, hidden by default),
+a guest's Team panel shows the teams, the selected team, its activity and its docs, and nothing to act with: every
+action (New team, Hire, Mark, Invite, Fire, Show tab, reply, Done, End, Delete) is refused to a guest's view,
+read-only or write, by the plugin's host from the app's word for that view. The export folder setting is left out of
+a guest's view. `ccc team` typed in a tab the owner shared with a write guest is the owner's command, like anything
+typed there. An app without guests sends no access: every view is the owner's, as before.
+
 ## Metrics
 
 Raw facts per member: model and effort, cost in USD and context percent as Claude Code reports them (unknown when it

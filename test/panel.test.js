@@ -1178,3 +1178,120 @@ test('New team is the title bar\'s + action: a click opens the form in the click
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// ---- guests (cc-cockpit guest invites: main's `from.access`, never the page) ----
+
+/** `act` from a view main tagged with `access`. */
+async function actAs(f, message, view, access) {
+  const before = f.posts.length
+  await f.page(message, view, 'team', access)
+  const results = f.posts.slice(before).filter(([, m, o]) => m.type === 'result' && o && o.view === view)
+  assert.equal(results.length, 1, `one result for ${message.type}`)
+  return results[0][1]
+}
+
+test('a guest reads the state, the activity, the docs and a doc; the export folder is left out of its state', async () => {
+  const s = setup()
+  s.f.ctx.settings.app = { exportDir: '/Users/owner/exports' }
+  const { roomId } = await team(s)
+  await s.f.ctx.rooms.docs.put(roomId, 'shared/plan.md', 'the plan')
+  await settle()
+  const counted = (await s.inst.teams.get(roomId)).metrics.actions.length
+  for (const [view, access] of [['web:2', 'read'], ['web:3', 'write']]) {
+    await s.f.page({ type: 'select', roomId }, view, 'team', access)
+    const st = postsOf(s.f, 'state', view).at(-1)
+    assert.equal(st.team.roomId, roomId)
+    assert.equal(st.exportDir, null)
+    assert.ok(!JSON.stringify(st).includes('/Users/owner'))
+    assert.equal((await actAs(s.f, { type: 'activity', roomId }, view, access)).ok, true)
+    assert.equal((await actAs(s.f, { type: 'docs', roomId }, view, access)).ok, true)
+    const doc = await actAs(s.f, { type: 'doc', roomId, path: 'shared/plan.md' }, view, access)
+    assert.equal(doc.text, 'the plan')
+  }
+  // A guest's reads are nobody's activity (the person's time is the owner's).
+  await settle()
+  assert.equal((await s.inst.teams.get(roomId)).metrics.actions.length, counted)
+  // The owner's view (tagged, or untagged as on an older app) keeps the folder.
+  await s.f.page({ type: 'hello', selected: roomId }, 'web:4', 'team', 'owner')
+  assert.equal(postsOf(s.f, 'state', 'web:4').at(-1).exportDir, '/Users/owner/exports')
+  await s.f.page({ type: 'hello', selected: roomId })
+  assert.equal(postsOf(s.f, 'state').at(-1).exportDir, '/Users/owner/exports')
+})
+
+test('every action from a guest is refused before it runs, read or write, and counts as nobody\'s activity', async () => {
+  const s = setup()
+  const { roomId } = await team(s)
+  await s.f.ctx.rooms.end(roomId).catch(() => {})
+  const live = await team(s)
+  await settle()
+  const opens = s.f.opens.length
+  const actionsBefore = (await s.inst.teams.get(live.roomId)).metrics.actions.length
+  const tries = [
+    { type: 'new-team', title: 'Mine now', kickoff: 'lead.md' },
+    { type: 'hire', roomId: live.roomId, name: 'qa', kickoff: 'dev.md' },
+    { type: 'mark', roomId: live.roomId, label: 'x' },
+    { type: 'end', roomId: live.roomId },
+    { type: 'delete', roomId },
+    { type: 'reply', roomId: live.roomId, id: 'q1', text: 'yes' },
+    { type: 'done', roomId: live.roomId, id: 'q1' },
+    { type: 'fire', roomId: live.roomId, name: 'dev' },
+    { type: 'focus', roomId: live.roomId, name: 'dev' },
+    { type: 'invite', roomId: live.roomId, name: 'qa' },
+  ]
+  for (const access of ['read', 'write', 'something-new']) {
+    for (const m of tries) {
+      const r = await actAs(s.f, { ...m, req: 7 }, 'web:5', access)
+      assert.deepEqual([r.ok, r.action, r.req, r.error], [false, m.type, 7, 'Guests can watch a team, not change it: the owner runs it.'], `${access} ${m.type}`)
+    }
+  }
+  await settle()
+  assert.equal(s.f.opens.length, opens)
+  assert.equal((await s.inst.teams.get(live.roomId)).endedAt, undefined)
+  assert.ok(await s.inst.teams.get(roomId))
+  assert.equal((await s.f.ctx.rooms.members(live.roomId)).some((m) => m.name === 'dev'), true)
+  assert.equal((await s.inst.teams.get(live.roomId)).metrics.actions.length, actionsBefore)
+})
+
+test("an older app's from (no access) is the owner's, as today: actions run", async () => {
+  const s = setup()
+  // `team` runs New team and Hire from a view with no access in its from.
+  const { roomId } = await team(s, 'web:6')
+  const r = await actAs(s.f, { type: 'mark', roomId, label: 'old app' }, 'web:6', undefined)
+  assert.equal(r.ok, true, r.error)
+})
+
+test("the header's New team opens the form only for the owner's click, never a guest's", async () => {
+  const s = setup()
+  const click = s.f.actionListeners.get('team')
+  const forms = () => s.f.posts.filter(([, m]) => m.type === 'new-team')
+  click('new-team', { view: 'web:2', access: 'read' })
+  click('new-team', { view: 'web:3', access: 'write' })
+  assert.equal(forms().length, 0)
+  click('new-team', { view: 'web:4', access: 'owner' })
+  click('new-team', { view: 'desktop' })
+  assert.deepEqual(forms().map(([, , o]) => o && o.view), ['web:4', 'desktop'])
+})
+
+test("no owner path reaches a guest: a hire with a cwd and an export, then the guest's state, activity and docs", async () => {
+  const s = setup()
+  const out = tmp()
+  s.f.ctx.settings.app = { exportDir: out }
+  const sub = path.join(s.dir, 'sub')
+  fs.mkdirSync(sub)
+  const { roomId } = await team(s)
+  const h = await act(s.f, { type: 'hire', roomId, name: 'qa', kickoff: 'dev.md', cwd: sub })
+  assert.equal(h.ok, true, h.error)
+  const live = await team(s)
+  const ended = await act(s.f, { type: 'end', roomId })
+  assert.equal(ended.ok, true, ended.error)
+  for (const rid of [roomId, live.roomId]) {
+    const before = s.f.posts.length
+    await s.f.page({ type: 'select', roomId: rid }, 'web:8', 'team', 'read')
+    const seen = [postsOf(s.f, 'state', 'web:8').at(-1)]
+    seen.push(await actAs(s.f, { type: 'activity', roomId: rid }, 'web:8', 'read'))
+    seen.push(await actAs(s.f, { type: 'docs', roomId: rid }, 'web:8', 'read'))
+    const text = JSON.stringify(seen) + JSON.stringify(s.f.posts.slice(before).filter(([, , o]) => o && o.view === 'web:8'))
+    assert.ok(!text.includes(out), `export folder in ${rid}`)
+    assert.ok(!text.includes(s.dir), `project folder in ${rid}`)
+  }
+})

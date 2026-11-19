@@ -72,6 +72,15 @@
     })
   }
 
+  /**
+   * A guest of the owner's (cc-cockpit guest invites) looks at this page: `ccPanel.view.access` is 'read' or 'write'
+   * (an older app has none: the owner). A hint only, to leave out what the host refuses a guest anyway (every action);
+   * the host decides from main's tag, never from this page.
+   */
+  const guest = () => {
+    const a = ccPanel.view && ccPanel.view.access
+    return a === 'read' || a === 'write'
+  }
   const hello = () => ccPanel.post({ type: 'hello', selected })
   let pingTimer = null
   function startPing() {
@@ -714,6 +723,8 @@
       const who = h('div', { class: 'who' }, h('b', {}, q.from), h('span', { class: 'cc-muted small' }, [V.fmtTime(q.askedAt), V.fmtAge(q.askedAt, now)].filter(Boolean).join(' · ')))
       const text = h('div', { class: 'text' }, q.text)
       if (ended) return h('div', { class: 'q' }, who, text, h('p', { class: 'cc-muted' }, 'Not answered before the team ended.'))
+      // A guest sees what waits on the owner, with nothing to answer it with.
+      if (guest()) return h('div', { class: 'q' }, who, text)
       return h('div', { class: 'q' }, who, text,
         h('div', { class: 'reply' },
           h('textarea', {
@@ -738,7 +749,8 @@
     const roomId = team.roomId
     const s = V.statusInfo(m.status)
     const shape = V.stateShape(m.status)
-    const live = team.endedAt === undefined && m.in === true
+    // A guest neither acts on a member nor shows its tab (the host refuses both).
+    const live = team.endedAt === undefined && m.in === true && !guest()
     const ctx = V.contextLevel(m.contextPercent)
     const actionsBtn = live
       ? h('button', { type: 'button', class: 'cc-icon more', 'data-key': `act-${m.name}`, title: `Actions for ${m.name}`, 'aria-haspopup': 'menu', onclick: (e) => {
@@ -861,7 +873,7 @@
         // The state is a symbol and a word with its own border, never only a colour.
         h('span', { class: `state state-${st.key}` }, h('span', { 'aria-hidden': 'true' }, `${st.symbol} `), st.label)),
       h('dl', { class: 'kpis' }, V.kpis(team).map((k) => h('div', { class: 'kpi' }, h('dt', {}, k.label), h('dd', {}, k.value)))),
-      h('div', { class: 'bar' },
+      guest() ? null : h('div', { class: 'bar' },
         ended
           ? btn('Delete…', () => openForm('delete'), { class: 'cc-danger' })
           : [btn('+ Hire', () => openForm('hire', {}), { class: 'cc-primary' }), btn('Mark', () => openForm('mark', {})), btn('Invite', () => openForm('invite', {})),
@@ -923,7 +935,7 @@
     if (msg.type === 'state') applyState(msg)
     // The title bar's + (ctx.panels.onAction, lib/panel.js), as the old in-page button: it replaces another form, but a
     // New team form already open keeps what was typed in it.
-    else if (msg.type === 'new-team') {
+    else if (msg.type === 'new-team' && !guest()) {
       if (!form || form.kind !== 'new-team') openForm('new-team')
     } else if (msg.type === 'result') {
       const cb = pending.get(msg.req)
