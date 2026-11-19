@@ -59,7 +59,7 @@ Rooms' own words.
 - `mark` (coordinator) puts a labelled timestamp on the team's timeline. Cost and time are reported per span between
   marks. What a mark means is yours: the tool only keeps it. A label is one line of at most 200 characters, a team
   has at most 200 marks, and `start`, `now` and `end` are refused as labels (they name the ends of the spans).
-- `list` shows the team and its members; `stats` shows the metrics. Both take `--json`.
+- `list` shows the team and its members; `stats` shows the metrics. Both take `--json`; `list --json` also gives each member's Claude `sessionId` (its transcript), while its tab is open.
 - `end` (coordinator) exports the team, then ends the room and closes the tabs the hire opened (app 0.22.0 and later): never a coordinator's tab, a tab that joined by invite, or one the person typed in. `--export <dir>` writes a new folder
   `<team-slug>-<yyyymmdd-hhmm>/` under `<dir>` (docs, `log.jsonl`, `metrics.json`, `metrics.md`, `questions.md`);
   without it the plugin's "Export folder" setting is used (it accepts `~/` and a folder relative to the project), and

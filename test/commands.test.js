@@ -405,7 +405,7 @@ test('list: any member; text and --json with status, held, paused', async () => 
   const { f, roomId, lead } = await started()
   await f.run(['hire', 'dev', '--kickoff', 'kick/dev.md'], lead)
   const devTab = f.opens.find((o) => o.name === 'dev').tabId
-  f.emitSession({ tabId: devTab, status: 'working' })
+  f.emitSession({ tabId: devTab, status: 'working', sessionId: 'sess-dev' })
   f.setPaused(roomId, true)
   const text = await f.run(['list'], { tabId: devTab })
   assert.equal(text.code, undefined, text.stderr)
@@ -416,7 +416,8 @@ test('list: any member; text and --json with status, held, paused', async () => 
   assert.equal(json.title, 'Build it')
   assert.equal(json.paused, true)
   assert.equal(json.you, 'lead')
-  assert.deepEqual(json.members.find((m) => m.name === 'dev'), { name: 'dev', coordinator: false, status: 'working', held: 0 })
+  assert.deepEqual(json.members.find((m) => m.name === 'dev'), { name: 'dev', coordinator: false, status: 'working', held: 0, sessionId: 'sess-dev' })
+  assert.equal('sessionId' in json.members.find((m) => m.name === 'lead'), false, 'no session id: none known')
   assert.equal((await f.run(['list', 'x'], lead)).code, 2)
 })
 
