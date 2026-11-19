@@ -33,6 +33,7 @@ help
   tab), until the coordinator runs `ccc room read`, which the skill tells it to do when it expects answers. Members
   should not expect an immediate reaction.
 - `fire` removes a member from the room; its tab stays open.
+- `end` ends the room and closes the tabs the hire opened (app 0.22.0 and later); a coordinator's tab, an invited tab and a tab you typed in stay.
 - A hired member opens as a split pane beside the coordinator's tab. Default layout "column": the coordinator on the
   left, the members stacked on the right in hire order, each below the previous one, as many as the app's pane limit
   allows. Every new pane halves its anchor, so the heights are uneven; drag the dividers. The setting "Layout of hired members" also

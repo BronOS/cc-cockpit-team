@@ -811,3 +811,29 @@ test('End whose record refresh fails outright: the record is ended in memory (a 
   await teams.refresh()
   assert.equal(rec.endedAt, f.rooms.get(roomId).endedAt)
 })
+
+test('end closes the hired members\' tabs, never the lead\'s (invited), a coordinator\'s or one the person typed in', async () => {
+  const { f, dir, lead, roomId, dev } = await team()
+  fs.writeFileSync(path.join(dir, 'qa.md'), '# You are qa\n')
+  fs.writeFileSync(path.join(dir, 'co.md'), '# You are co\n')
+  assert.equal((await f.run(['hire', 'qa', '--kickoff', 'qa.md'], lead)).code, undefined)
+  assert.equal((await f.run(['hire', 'co', '--kickoff', 'co.md', '--coordinator'], lead)).code, undefined)
+  const qaTab = f.opens.find((o) => o.name === 'qa').tabId
+  const coTab = f.opens.find((o) => o.name === 'co').tabId
+  // The person took qa over: its tab stays.
+  f.emitSession({ tabId: qaTab, status: 'waiting', typed: true })
+  const r = await f.run(['end'], lead)
+  assert.equal(r.code, undefined, r.stderr)
+  assert.match(r.stdout, /\(1 member tab closed, the others stay\)/)
+  assert.deepEqual(f.closedTabs, [dev.tabId])
+  assert.ok(f.rooms.get(roomId).endedAt !== undefined)
+  for (const kept of ['lead-tab', qaTab, coTab]) assert.ok(!f.closedTabs.includes(kept), kept)
+})
+
+test('end on an app before 0.22.0 (no closeTabs): the room ends and every tab stays, as before', async () => {
+  const { f, lead } = await team({ noCloseTabs: true })
+  const r = await f.run(['end'], lead)
+  assert.equal(r.code, undefined, r.stderr)
+  assert.match(r.stdout, /\(their tabs stay\)/)
+  assert.deepEqual(f.closedTabs, [])
+})

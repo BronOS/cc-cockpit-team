@@ -70,6 +70,7 @@ function fakeCtx(opts = {}) {
   const posts = []
   const schedules = []
   const opens = [] // every rooms.open / sessions.open, with the options the host passed
+  const closedTabs = [] // the tabs a rooms.end with closeTabs closed, in order
   const panelListeners = new Map()
   const actionListeners = new Map()
   const headers = new Map()
@@ -239,19 +240,32 @@ function fakeCtx(opts = {}) {
         members: r.members.size,
       }))
     },
-    async end(id) {
+    async end(id, options = {}) {
       // Main's endRoom is a no-op on an ended room (it resolves), and the members stay in the record as who took part
-      // (their tabs are unbound: `members` answers them with no `tabId`).
+      // (their tabs are unbound: `members` answers them with no `tabId`). `closeTabs` (app 0.22.0) closes the tabs of
+      // the members main opened for the room (rooms.open), never a coordinator's, an invited one's or one the person
+      // typed in (main's rule, room-service.ts end); an older app (`opts.noCloseTabs`) ignores it and answers nothing.
       const r = room('rooms.end', id)
-      if (r.endedAt !== undefined) return
+      if (options.closeTabs !== undefined && typeof options.closeTabs !== 'boolean') {
+        throw refuse('rooms.end', 'closeTabs must be a boolean')
+      }
+      if (r.endedAt !== undefined) return opts.noCloseTabs ? undefined : { closed: 0 }
+      const close = []
       for (const m of r.members.values()) {
+        const s = m.tabId ? sessions.get(m.tabId) : undefined
+        if (options.closeTabs === true && !opts.noCloseTabs && m.opened && !m.coordinator && s && !s.typed) close.push(m.tabId)
         if (m.tabId) setSessionRoom(m.tabId, null)
         delete m.tabId
       }
       r.invites.clear()
       r.endedAt = now()
       log(r, { type: 'end', why: 'ended' })
+      for (const tabId of close) {
+        sessions.delete(tabId)
+        closedTabs.push(tabId)
+      }
       emitSessions()
+      return opts.noCloseTabs ? undefined : { closed: close.length }
     },
     async delete(id) {
       const r = room('rooms.delete', id)
@@ -268,7 +282,7 @@ function fakeCtx(opts = {}) {
       const place = opts.noBeside ? undefined : checkBeside('rooms.open', options.beside, options.side)
       const { tabId, cwd } = openTab('rooms.open', options)
       const placed = place === undefined ? undefined : placeTab(tabId, place)
-      const m = { name: options.name, coordinator: options.coordinator === true, tabId, held: 0 }
+      const m = { name: options.name, coordinator: options.coordinator === true, tabId, held: 0, opened: true }
       r.members.set(m.name, m)
       setSessionRoom(tabId, r, m)
       opens.push({ via: 'rooms.open', roomId: id, tabId, ...structuredClone(options), cwd })
@@ -516,6 +530,7 @@ function fakeCtx(opts = {}) {
     posts,
     schedules,
     opens,
+    closedTabs,
     headers,
     shownPanels,
     panelListeners,

@@ -45,7 +45,7 @@ log stay in Rooms, where main enforces every rule. The old experimental plugin o
 | `ask "<question>"` / `-` | any member | a question to the person (§3); prints its id |
 | `mark "<label>"` | coordinator | a timestamp on the team's timeline (§4) |
 | `list [--json]`, `stats [--json]` | any member | the team, its members, the metrics |
-| `end [--export <dir>]` | coordinator | exports (§5), then ends the room |
+| `end [--export <dir>]` | coordinator | exports (§5), then ends the room and closes the hired members' tabs |
 | `help` | anyone | usage |
 
 - The caller is known from `CliCall.tabId` (set by main, never by the caller); "coordinator" is read from
@@ -139,7 +139,7 @@ new row (its earlier numbers are in the totals). The log state is a cursor and a
 
 ## 5. End and export
 
-`end [--export <dir>]` (coordinator) or the panel's **End and export**. The export goes into a **new** folder
+`end [--export <dir>]` (coordinator) or the panel's **End and export**. The room ends with `ctx.rooms.end(id, { closeTabs: true })`: the tabs the app opened for hired members close with it, with no dialog (they were opened automatically, and the End is the person's decision); main keeps a coordinator's tab, an invited tab (the person's own, the lead's) and any tab the person typed in, and an app before 0.22.0 closes none. The export goes into a **new** folder
 `<dir>/<team-slug>-<yyyymmdd-hhmm>/`, made with an exclusive create, never into an existing one:
 `docs/` (the room's docs as stored, `shared/` and `members/<name>/`), `log.jsonl` (the room log, paged through to the
 end), `metrics.json`, `metrics.md` (a table, split at marks), `questions.md`. Without `--export` the plugin setting

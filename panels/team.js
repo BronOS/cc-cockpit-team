@@ -450,7 +450,11 @@
       say(`Team started; ${res.name} is open in its own tab.`, false)
     } else if (f.kind === 'hire') say(`${res.name} hired.`, false)
     else if (f.kind === 'mark') say(`Mark "${res.label}" added.`, false)
-    else if (f.kind === 'end') say(res.folder ? `Team ended. Exported to ${res.folder}` : 'Team ended.', false)
+    else if (f.kind === 'end') {
+      // `closed`: the member tabs the app closed with the team (an app before 0.22.0 closes none and says nothing).
+      const tabs = Number.isInteger(res.closed) && res.closed > 0 ? ` ${res.closed} member tab${res.closed === 1 ? '' : 's'} closed.` : ''
+      say((res.folder ? `Team ended. Exported to ${res.folder}.` : 'Team ended.') + tabs, false)
+    }
     else if (f.kind === 'delete') say(`Team "${res.title}" deleted.`, false)
     else if (f.kind === 'fire') say(`${res.name} removed from the team.`, false)
     else render()
