@@ -127,7 +127,7 @@ Note: `dist/host.js` is hand-maintained source (there is no build step), not a b
 
 Tested with a fake `ctx` (the tests' picture of Rooms) and run live on cc-cockpit 0.22.0: starting a team, hiring
 members as split panes (a column of six), questions asked and answered in the panel, End closing the hired members'
-tabs, and a team left paused across an app restart. Not yet tried live: the export folder and the metrics against a
+tabs, and a team left paused across an app restart. Not yet tried live: `ccc team star` (its room message, the panel's badge, the export's Stars table), the export folder and the metrics against a
 long real room log (the log field names the metrics read come from the app's source).
 
 Design: `docs/design.md`.

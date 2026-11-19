@@ -1243,7 +1243,11 @@ test('every action from a guest is refused before it runs, read or write, and co
       const r = await actAs(s.f, { ...m, req: 7 }, 'web:5', access)
       assert.deepEqual([r.ok, r.action, r.req, r.error], [false, m.type, 7, 'Guests can watch a team, not change it: the owner runs it.'], `${access} ${m.type}`)
     }
+    // Stars have no panel action (only `ccc team star` in a coordinator's tab): asked for anyway, nothing runs.
+    const star = await actAs(s.f, { type: 'star', roomId: live.roomId, name: 'dev', reason: 'x', req: 7 }, 'web:5', access)
+    assert.deepEqual([star.ok, star.error], [false, 'unknown action: star'])
   }
+  assert.equal((await s.inst.teams.get(live.roomId)).stars.length, 0)
   await settle()
   assert.equal(s.f.opens.length, opens)
   assert.equal((await s.inst.teams.get(live.roomId)).endedAt, undefined)

@@ -167,11 +167,22 @@ test('star: a fire of the starred member while the star holds its name is refuse
   const starred = f.run(['star', 'dev', 'x'], lead)
   await held.reached
   const fired = await host.instances().hiring.fire(roomId, 'dev').catch((e) => e)
-  assert.match(fired.message, /a star for dev is being given: try again in a moment/)
+  assert.match(fired.message, /a star given by or to dev is on its way: try again in a moment/)
   held.release()
   assert.equal((await starred).code, undefined)
   assert.equal((await host.instances().teams.get(roomId)).stars.length, 1)
   assert.ok(f.rooms.get(roomId).members.has('dev'))
+})
+
+test('star: a fire of the coordinator giving a star is refused while it holds its own name', async () => {
+  const { f, lead, roomId } = await team()
+  const held = holdNext(f, 'members', 1)
+  const starred = f.run(['star', 'dev', 'x'], lead)
+  await held.reached
+  const fired = await host.instances().hiring.fire(roomId, 'lead').catch((e) => e)
+  assert.match(fired.message, /a star given by or to lead is on its way: try again in a moment/)
+  held.release()
+  assert.equal((await starred).code, undefined)
 })
 
 test('star: a member fired after its command\'s check, before the star\'s own read, gets nothing', async () => {
