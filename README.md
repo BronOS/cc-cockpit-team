@@ -58,9 +58,10 @@ help
 
 ## The Team panel
 
-Teams list and a team page: members with status, cost and a menu (focus tab, fire, copy invite); open questions with
-Reply and Done; Hire, Mark, Copy invite, End and Delete; and the team's activity (the room log, filtered by member and
-kind) and docs, shown when opened. New team (the + in the panel's title bar) takes a title, an optional lead kickoff file, model, effort and folder.
+A row of team chips and a summary card (state, elapsed, cost, members, messages; Hire, Mark, Invite, End or Delete); open
+questions as an alert block with a one-line answer (Enter sends) and Done; and tabs for Members (a state shape, cost, time,
+context and held messages per member, a menu to focus the tab, fire or copy an invite), Activity (the room log, filtered by member and
+kind), Docs and Numbers. New team (the + in the panel's title bar) takes a title, an optional lead kickoff file, model, effort and folder.
 Destructive steps ask in the page.
 
 ## Metrics

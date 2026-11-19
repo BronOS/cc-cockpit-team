@@ -52,6 +52,60 @@
     return Object.hasOwn(STATUS, status) ? STATUS[status] : { icon: '?', word: 'unknown' }
   }
 
+  /**
+   * The shape a member's state is drawn as (a second signal next to the word, so no state rests on a colour):
+   * working a filled circle with a play mark, waiting for input a ring with a tick, needs permission a filled rounded
+   * square with !, idle and starting a dashed ring, and left / exited / no tab a cross. `shape` is the class suffix.
+   */
+  const SHAPES = {
+    working: { shape: 'filled', glyph: '▶' },
+    waiting: { shape: 'ring', glyph: '✓' },
+    'needs-permission': { shape: 'square', glyph: '!' },
+    idle: { shape: 'dashed', glyph: '' },
+    starting: { shape: 'dashed', glyph: '' },
+    ended: { shape: 'gone', glyph: '✕' },
+    closed: { shape: 'gone', glyph: '✕' },
+    left: { shape: 'gone', glyph: '✕' },
+  }
+  function stateShape(status) {
+    return Object.hasOwn(SHAPES, status) ? SHAPES[status] : { shape: 'unknown', glyph: '?' }
+  }
+
+  /** A team's state as a symbol and an upper-case word: LIVE, PAUSED or ENDED (an ended team is never "paused"). */
+  function teamState(t) {
+    if (t.endedAt !== undefined) return { key: 'ended', symbol: '■', label: 'ENDED' }
+    if (t.paused) return { key: 'paused', symbol: '‖', label: 'PAUSED' }
+    return { key: 'live', symbol: '●', label: 'LIVE' }
+  }
+
+  /** `21m ago` / `3h ago` / `2d ago` / `just now`; empty for a bad value. */
+  function fmtAge(at, nowMs) {
+    if (typeof at !== 'number' || !Number.isFinite(at)) return ''
+    const sec = Math.max(0, Math.round(((typeof nowMs === 'number' ? nowMs : Date.now()) - at) / 1000))
+    if (sec < 45) return 'just now'
+    const min = Math.round(sec / 60)
+    if (min < 60) return `${min}m ago`
+    const h = Math.round(min / 60)
+    if (h < 48) return `${h}h ago`
+    return `${Math.round(h / 24)}d ago`
+  }
+
+  /** The four summary tiles of a team: from `team.stats` when it has them, else a dash. */
+  function kpis(team) {
+    const st = team && team.stats
+    const t = st && st.totals
+    return [
+      { label: 'elapsed', value: st ? fmtDuration(st.elapsedMs) : '—' },
+      { label: 'cost', value: t ? fmtCost(t.costUsd) : '—' },
+      { label: 'members', value: String(Array.isArray(team && team.members) ? team.members.length : 0) },
+      { label: 'sent / recv', value: t ? `${t.sent} / ${t.received}` : '—' },
+    ]
+  }
+
+  /** A context percent as 0..100 (clamped) or null, and whether it is high enough to be called out. */
+  const CONTEXT_HIGH = 80
+  const contextLevel = (p) => (typeof p === 'number' && Number.isFinite(p) ? { pct: Math.min(100, Math.max(0, Math.round(p))), high: p >= CONTEXT_HIGH } : null)
+
   /** Why a member left, in words (metrics `leftWhy`). */
   function leftText(m) {
     if (m.status !== 'left') return ''
@@ -238,7 +292,7 @@
   }
 
   const api = {
-    fmtDuration, fmtCost, fmtPercent, fmtTime, statusInfo, leftText, teamFlags, teamMeta, sortTeams, pickSelected, logMoved, activityKey,
+    fmtDuration, fmtCost, fmtPercent, fmtTime, statusInfo, stateShape, teamState, fmtAge, kpis, contextLevel, leftText, teamFlags, teamMeta, sortTeams, pickSelected, logMoved, activityKey,
     describeEntry, KINDS, docLabel, newTeamRequest, hireRequest, inviteRequest, replyRequest, replyOutcome, markRequest, endRequest,
     activityRequest, PING_SECONDS: 30,
   }

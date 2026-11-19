@@ -204,16 +204,28 @@ An ended team stays in the panel, read-only, until **Delete** (`ctx.rooms.delete
 
 ## 7. Panel
 
-One panel, "Team", per window; state always marked with an icon or a word, never by colour alone.
-- **Teams**: title, member count, a waiting-on-you count, "ended" / "paused" as text.
-- **Members** of the selected team: name (★ coordinator), status (icon + word: working, waiting, idle, closed), the
-  current tool, model / effort, cost and context %, messages waiting. A click focuses the tab; the row menu: Fire, Copy
-  invite.
-- **Waiting on you**: §3's questions with Reply and Done.
-- **Activity**: the room log newest first, marks included, filterable by member and by kind.
-- **Docs**: the list; a click shows the doc read-only in the panel (`ctx.rooms.docs.get`; there is no API to open
-  core's room view, which the person reaches from the tab strip).
-- Actions: New team (the + in the panel's title bar, `ctx.panels.header`; the page has no heading row of its own), Hire…, Mark, End and export, Delete (ended teams).
+One panel, "Team", per window. A state is never a colour alone: every one has a shape, a border weight or a word (the
+person has trouble telling close shades apart). The page works from about 320 to 900 px wide.
+- **Teams**: one wrapping row of chips (`role="listbox"`, Enter / Space select, arrows move focus). Selected: 2px accent
+  outline and bold. Live ●, ended ■, paused ‖; questions waiting a solid amber `? N` pill.
+- **Summary card** of the selected team: title, a LIVE / ENDED / PAUSED label with its symbol and a 1.5px border, four
+  tiles (elapsed, cost, members, sent / received; a dash until `team.stats` exists) and the actions: `+ Hire` (primary),
+  Mark, Invite, then `End…` (danger) at the right. An ended team offers only `Delete…`. Forms render under the card.
+- **Waiting on you**: an alert block (4px amber left edge, `? Waiting on you · N`) only when questions exist; each
+  question is a compact card with who, time and age, the text, and a one-row answer box (Enter sends, Shift+Enter is a
+  new line, it grows to about 6 rows) beside a ghost Done. An ended team shows them read-only and muted.
+- **Tabs** (`role="tablist"`, arrow keys): Members (count), Activity, Docs (count once loaded), Numbers. The active tab is
+  bold with a 3px accent underline; the choice is kept per page. Activity and Docs load when their tab is shown, and
+  again on a log move while shown, never a doc's text.
+- **Members**: a grid row per member: a state shape (working filled circle with ▶, waiting for input ring with ✓, needs
+  permission amber square with !, idle / starting dashed ring, left / closed ✕), name, ★ for the coordinator, the state
+  word and tool; right: cost and working time; second line: model / effort, a context bar (amber and bold from 80%),
+  `✉ N held` and the left-member text. A click focuses the tab; the ⋯ menu (Show tab, Copy invite, Fire) shows on hover
+  or focus, always on touch and on narrow widths.
+- **Numbers**: the totals as small tiles and the spans table. **Activity**: time, kind chip, text, filterable by member
+  and kind. **Docs**: the list; a click shows the doc read-only (`ctx.rooms.docs.get`; there is no API to open core's
+  room view, which the person reaches from the tab strip).
+- New team is the + in the panel's title bar (`ctx.panels.header`; the page has no heading row of its own).
 Core's room view (messages, docs, remove, pause and resume) is not duplicated.
 What the page has open for a team (a member menu, a form or confirm, a reply in flight) is bound to that team: any
 change of the selection (a click, the auto-select after the team is deleted or ended elsewhere) closes the menu and the

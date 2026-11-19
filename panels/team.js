@@ -27,8 +27,9 @@
   let lastFull = null
   let lastSig = null
   let deferred = false
-  /** Section open states (kept across renders: a render rebuilds the elements). */
-  const open = { questions: true, members: true, stats: false, activity: false, docs: false }
+  /** The tab shown (kept across renders and team switches: a render rebuilds the elements). */
+  const TABS = ['members', 'activity', 'docs', 'stats']
+  let tab = 'members'
   const activity = { roomId: null, entries: [], before: null, loading: false, error: null, member: '', kind: '', seq: undefined, gen: 0, more: false, dirty: false, paged: false }
   const docs = { roomId: null, list: [], more: false, loading: false, error: null, seq: undefined, gen: 0, dirty: false }
   let openDoc = null // { path, text, loading, error }
@@ -233,8 +234,8 @@
   }
   function refreshLog() {
     if (!selected) return
-    if (open.activity && activity.seq !== lastActKey) loadActivity(false, true)
-    if (open.docs && docs.seq !== lastLogSeq) loadDocs(true)
+    if (tab === 'activity' && activity.seq !== lastActKey) loadActivity(false, true)
+    if (tab === 'docs' && docs.seq !== lastLogSeq) loadDocs(true)
   }
 
   /** A held entry is newer than another: by seq when both have one (marks have none), else by time. */
@@ -598,7 +599,7 @@
             h('code', { class: 'mono text' }, f.result.line),
             h('div', { class: 'buttons' }, btn('Copy line', () => copy(f.result.line), { class: 'cc-primary' }), btn('Close', closeForm, { class: 'cc-ghost' })))
         }
-        return h('div', { class: 'cc-card form' }, h('h3', { class: 'cc-card-title' }, 'Copy invite'),
+        return h('div', { class: 'cc-card form' }, h('h3', { class: 'cc-card-title' }, 'Invite'),
           h('p', { class: 'cc-muted' }, 'An invite is for a new name: a name already in the team is refused.'),
           field('invite-name', 'New member name', 'name'), check('invite-coord', 'Coordinator', 'coordinator'), err, formButtons('Create invite'))
       case 'mark':
@@ -624,88 +625,121 @@
   }
 
   function renderTeams() {
-    const rows = V.sortTeams(teams).map((t) => {
-      const flags = V.teamFlags(t)
-      return h('li', {
-        class: 'cc-row' + (t.waiting > 0 ? ' cc-unread' : ''),
+    const sorted = V.sortTeams(teams)
+    const chipFocus = (from, by) => {
+      const chips = root.querySelectorAll('.chip')
+      const next = chips[from + by]
+      if (next) next.focus()
+    }
+    const chips = sorted.map((t, i) => {
+      const st = V.teamState(t)
+      const on = t.roomId === selected
+      return h('div', {
+        class: `chip chip-${st.key}` + (on ? ' on' : ''),
         role: 'option',
         tabindex: 0,
+        title: V.teamMeta(t),
         'data-key': `team-${t.roomId}`,
-        'aria-selected': t.roomId === selected ? 'true' : 'false',
+        'aria-selected': on ? 'true' : 'false',
         onclick: () => select(t.roomId),
         onkeydown: (e) => {
-          if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+          if (e.target !== e.currentTarget) return
+          if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
             select(t.roomId)
+          } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+            e.preventDefault()
+            chipFocus(i, e.key === 'ArrowRight' ? 1 : -1)
           }
         },
       },
-      h('div', { class: 'cc-row-main' },
-        h('span', { class: 'cc-row-title' }, t.roomId === selected ? '▸ ' : '', t.title),
-        h('span', { class: 'cc-row-meta' }, V.teamMeta(t))),
-      h('span', { class: 'cc-row-actions' },
-        t.waiting > 0 ? h('span', { class: 'cc-badge amber' }, `? ${t.waiting} waiting`) : null,
-        flags.map((w) => h('span', { class: 'cc-badge grey' }, w))))
+      // The symbol is the state's shape (live dot, ended square, paused bars); the word is in the tooltip and the label.
+      h('span', { class: 'sym', 'aria-hidden': 'true' }, st.symbol),
+      h('span', { class: 'chip-title' }, t.title),
+      h('span', { class: 'sr' }, ` ${st.label.toLowerCase()}`),
+      t.waiting > 0 ? h('span', { class: 'ask', title: `${t.waiting} waiting on you` }, `? ${t.waiting}`) : null)
     })
     return h('section', {},
       // Whatever the selection: an old app's answer ("update the app") must not wait for a failed submit.
       stateError ? h('div', { class: 'cc-error-line', role: 'alert' }, stateError) : null,
       // No heading row of its own: the panel's title bar says "Team" and carries New team as its + action (lib/panel.js).
-      rows.length
-        ? h('ul', { class: 'cc-list', role: 'listbox', 'aria-label': 'Teams' }, rows)
+      chips.length
+        ? h('div', { class: 'teams', role: 'listbox', 'aria-label': 'Teams' }, chips)
         : h('div', { class: 'cc-empty' }, h('p', {}, 'No teams yet. Start one with + in the panel\'s title bar, or run `ccc team start "<title>"` from a Claude tab.')))
   }
 
-  function group(name, title, count, body) {
-    return h('details', { class: 'cc-group', open: open[name], ontoggle: (e) => {
-      // Also fires when the render sets `open`: only a change by the person counts.
-      if (e.target.open === open[name]) return
-      open[name] = e.target.open
-      if (open[name] && name === 'activity' && activity.seq !== lastActKey) loadActivity(false)
-      if (open[name] && name === 'docs' && docs.seq !== lastLogSeq) loadDocs()
-    } },
-    h('summary', { class: 'cc-group-title', 'data-key': `sum-${name}` }, title, count !== null ? h('span', { class: 'cc-count' }, ` ${count}`) : null),
-    body)
+  /** Switch tab; Activity and Docs ask for their list when it is not as of now (what opening their group did). */
+  function setTab(name) {
+    if (!TABS.includes(name)) return
+    tab = name
+    if (name === 'activity' && activity.seq !== lastActKey) return loadActivity(false)
+    if (name === 'docs' && docs.seq !== lastLogSeq) return loadDocs()
+    render()
   }
 
-  function questionsBody() {
+  function renderTabs() {
+    const counts = { members: team.members.length, docs: docs.roomId === selected && docs.seq !== undefined ? docs.list.length : null }
+    const labels = { members: 'Members', activity: 'Activity', docs: 'Docs', stats: 'Numbers' }
+    const buttons = TABS.map((name) =>
+      h('button', {
+        type: 'button', role: 'tab', class: 'tab' + (tab === name ? ' on' : ''), id: `tab-${name}`, 'data-key': `tab-${name}`,
+        'aria-selected': tab === name ? 'true' : 'false', 'aria-controls': 'tabpanel', tabindex: tab === name ? 0 : -1,
+        onclick: () => setTab(name),
+        onkeydown: (e) => {
+          const move = { ArrowRight: 1, ArrowLeft: -1 }[e.key]
+          const edge = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : null
+          if (move === undefined && edge === null) return
+          e.preventDefault()
+          const to = TABS[edge !== null ? edge : (TABS.indexOf(name) + move + TABS.length) % TABS.length]
+          setTab(to)
+          const el = findByKey(`tab-${to}`)
+          if (el) el.focus()
+        },
+      }, labels[name], counts[name] !== undefined && counts[name] !== null ? h('span', { class: 'n' }, ` ${counts[name]}`) : null))
+    return h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Team sections' }, buttons)
+  }
+
+  /** Enter sends the answer, Shift+Enter is a new line (and an IME's Enter, which picks a candidate, is left alone). */
+  function questionsBlock() {
     const qs = team.questions
-    if (qs.length === 0) return h('div', { class: 'cc-empty' }, h('p', {}, 'Nothing is waiting on you.'))
-    // An ended team is read-only: its open questions are shown, with nothing to answer or close them with.
+    if (qs.length === 0) return null
+    // An ended team is read-only: its open questions are shown, with nothing to answer or close them with, and the
+    // block loses its amber edge (nothing waits on the person any more).
     const ended = team.endedAt !== undefined
-    return h('div', {}, qs.map((q) => {
+    const now = Date.now()
+    const cards = qs.map((q) => {
       const roomId = team.roomId
       const key = `${roomId}:${q.id}`
       const busy = replying.has(key)
-      const head = [
-        h('div', { class: 'row-line' }, h('strong', {}, q.from), h('span', { class: 'cc-muted' }, `asked ${V.fmtTime(q.askedAt)}`)),
-        h('div', { class: 'text' }, q.text),
-      ]
-      if (ended) return h('div', { class: 'cc-card question' }, head, h('p', { class: 'cc-muted' }, 'Not answered before the team ended.'))
-      return h('div', { class: 'cc-card question' },
-        head,
-        h('textarea', {
-          'data-key': `reply-${q.id}`, 'aria-label': `Answer to ${q.from}`, placeholder: 'Your answer', value: drafts.get(key) || '', disabled: busy,
-          oninput: (e) => drafts.set(key, e.target.value),
-        }),
-        h('div', { class: 'actions' },
-          btn(busy ? 'Working…' : 'Reply', () => reply(roomId, q), { disabled: busy }),
-          btn('Done', () => done(roomId, q), { class: 'cc-ghost', disabled: busy, title: 'Close it without an answer' })))
-    }))
+      const who = h('div', { class: 'who' }, h('b', {}, q.from), h('span', { class: 'cc-muted small' }, [V.fmtTime(q.askedAt), V.fmtAge(q.askedAt, now)].filter(Boolean).join(' · ')))
+      const text = h('div', { class: 'text' }, q.text)
+      if (ended) return h('div', { class: 'q' }, who, text, h('p', { class: 'cc-muted' }, 'Not answered before the team ended.'))
+      return h('div', { class: 'q' }, who, text,
+        h('div', { class: 'reply' },
+          h('textarea', {
+            rows: 1, 'data-key': `reply-${q.id}`, 'aria-label': `Answer to ${q.from}`, placeholder: `Answer ${q.from}… (Enter sends)`, value: drafts.get(key) || '', disabled: busy,
+            oninput: (e) => drafts.set(key, e.target.value),
+            onkeydown: (e) => {
+              if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
+              e.preventDefault()
+              if (typeof e.target.value === 'string') drafts.set(key, e.target.value)
+              if (!replying.has(key)) reply(roomId, q)
+            },
+          }),
+          btn(busy ? 'Working…' : 'Done', () => done(roomId, q), { class: 'cc-ghost', disabled: busy, title: 'Close it without an answer' })))
+    })
+    return h('section', { class: 'attn' + (ended ? ' muted' : ''), 'aria-label': 'Waiting on you' },
+      h('div', { class: 'attn-h' }, h('span', { 'aria-hidden': 'true' }, '? '), `Waiting on you · ${qs.length}`), cards)
   }
 
   function memberRow(m) {
     const roomId = team.roomId
     const s = V.statusInfo(m.status)
+    const shape = V.stateShape(m.status)
     const live = team.endedAt === undefined && m.in === true
-    const meta = []
-    if (m.status === 'left') meta.push(V.leftText(m))
-    if (m.tool) meta.push(`using ${m.tool}`)
-    if (m.model || m.effort) meta.push([m.model, m.effort].filter(Boolean).join(' / '))
-    meta.push(`cost ${V.fmtCost(m.costUsd)}`, `context ${V.fmtPercent(m.contextPercent)}`, `working ${V.fmtDuration(m.workingMs)}`)
-    if (m.held > 0) meta.push(`${m.held} message${m.held === 1 ? '' : 's'} waiting`)
+    const ctx = V.contextLevel(m.contextPercent)
     const actionsBtn = live
-      ? h('button', { type: 'button', class: 'cc-icon', 'data-key': `act-${m.name}`, title: `Actions for ${m.name}`, 'aria-haspopup': 'menu', onclick: (e) => {
+      ? h('button', { type: 'button', class: 'cc-icon more', 'data-key': `act-${m.name}`, title: `Actions for ${m.name}`, 'aria-haspopup': 'menu', onclick: (e) => {
           e.stopPropagation()
           openMenu(e.currentTarget, `${m.name} actions`, [
             { label: 'Show tab', run: (rid) => focusMember(rid, m) },
@@ -714,40 +748,54 @@
           ])
         } }, '⋯')
       : null
+    const modelEffort = [m.model, m.effort].filter(Boolean).join(' / ')
+    const attention = m.status === 'needs-permission'
     return h('li', {
-      class: 'cc-row', tabindex: live ? 0 : null, 'data-key': live ? `member-${m.name}` : null, title: live ? 'Show this member\'s tab' : null,
+      class: 'm' + (live ? ' live' : ''), tabindex: live ? 0 : null, 'data-key': live ? `member-${m.name}` : null, title: live ? 'Show this member\'s tab' : null,
       onclick: live ? () => focusMember(roomId, m) : null,
       // Only the row's own Enter: the actions button's Enter bubbles up here and would also show the tab.
       onkeydown: live ? (e) => { if (e.target === e.currentTarget && e.key === 'Enter') focusMember(roomId, m) } : null,
     },
-    h('div', { class: 'cc-row-main' },
-      h('span', { class: 'cc-row-title row-line' },
-        h('span', { class: 'icon', 'aria-hidden': 'true' }, s.icon), h('span', { class: 'word' }, s.word),
-        h('span', {}, m.name), m.coordinator ? h('span', { class: 'cc-badge blue', title: COORDINATOR_TITLE }, '★ coordinator') : null),
-      h('span', { class: 'cc-row-meta' }, meta.join(' · '))),
-    h('span', { class: 'cc-row-actions' }, actionsBtn))
+    h('span', { class: `ic ic-${shape.shape}`, 'aria-hidden': 'true' }, shape.glyph),
+    h('span', { class: 'name' },
+      h('span', { class: 'nm' }, m.name),
+      m.coordinator ? h('span', { class: 'star', title: COORDINATOR_TITLE }, '★', h('span', { class: 'sr' }, ' coordinator')) : null,
+      h('span', { class: 'word' + (attention ? ' attn-word' : '') }, s.word + (m.tool ? ` · ${m.tool}` : ''))),
+    h('span', { class: 'right' }, h('b', {}, V.fmtCost(m.costUsd)), h('span', { class: 'cc-muted small' }, V.fmtDuration(m.workingMs))),
+    h('span', { class: 'more-slot' }, actionsBtn),
+    h('span', { class: 'line2' },
+      m.status === 'left' ? h('span', {}, V.leftText(m)) : null,
+      modelEffort ? h('span', {}, modelEffort) : null,
+      ctx
+        ? h('span', { class: 'ctx' + (ctx.high ? ' hi' : ''), title: `context ${ctx.pct}%` }, h('i', { style: `--p:${ctx.pct}%` }), h('span', { class: ctx.high ? 'hi-text' : '' }, `${ctx.pct}%`))
+        : h('span', {}, 'context unknown'),
+      m.held > 0 ? h('span', { class: 'held' }, `✉ ${m.held} held`) : null))
   }
 
   function membersBody() {
     return h('div', {},
       team.membersUnknown ? h('div', { class: 'notice' }, '? The member list could not be read just now; this is the last list read.') : null,
       team.members.length
-        ? h('ul', { class: 'cc-list' }, team.members.map(memberRow))
-        : h('div', { class: 'cc-empty' }, h('p', {}, 'No members yet. Hire one with the button above.')))
+        ? h('ul', { class: 'members' }, team.members.map(memberRow))
+        : h('div', { class: 'cc-empty' }, h('p', {}, 'No members yet. Hire one with the button above.')),
+      team.members.length
+        ? h('div', { class: 'legend' }, [['filled', '▶', 'working'], ['ring', '✓', 'waiting for input'], ['square', '!', 'needs permission'], ['dashed', '', 'idle'], ['gone', '✕', 'left']].map(([sh, g, w]) =>
+            h('span', {}, h('span', { class: `ic ic-${sh} tiny`, 'aria-hidden': 'true' }, g), w)))
+        : null)
   }
 
   function statsBody() {
     const st = team.stats
     if (!st) return h('div', { class: 'cc-empty' }, h('p', {}, 'No numbers yet.'))
     const t = st.totals
-    const item = (k, v) => [h('dt', {}, k), h('dd', {}, v)]
+    const tile = (k, v) => h('div', { class: 'tile' }, h('dt', {}, k), h('dd', {}, v))
     return h('div', {},
-      h('dl', { class: 'stats' },
-        item('Elapsed', V.fmtDuration(st.elapsedMs)), item('Cost', V.fmtCost(t.costUsd)),
-        item('Working', V.fmtDuration(t.workingMs)), item('Waiting', V.fmtDuration(t.waitingMs)), item('Idle', V.fmtDuration(t.idleMs)),
-        item('Messages', `${t.sent} sent, ${t.received} received, ${t.held ?? 0} held`), item('Docs', `${t.docReads} read, ${t.docWrites} written`),
-        item('You', `about ${V.fmtDuration(st.personActiveMs)} (a proxy)`),
-        item('Questions', `${st.questions.asked} asked, ${st.questions.answered} answered, ${st.questions.open} open`)),
+      h('dl', { class: 'tiles' },
+        tile('Elapsed', V.fmtDuration(st.elapsedMs)), tile('Cost', V.fmtCost(t.costUsd)),
+        tile('Working', V.fmtDuration(t.workingMs)), tile('Waiting', V.fmtDuration(t.waitingMs)), tile('Idle', V.fmtDuration(t.idleMs)),
+        tile('Messages', `${t.sent} sent, ${t.received} received, ${t.held ?? 0} held`), tile('Docs', `${t.docReads} read, ${t.docWrites} written`),
+        tile('You', `about ${V.fmtDuration(st.personActiveMs)} (a proxy)`),
+        tile('Questions', `${st.questions.asked} asked, ${st.questions.answered} answered, ${st.questions.open} open`)),
       h('div', { class: 'scroll-x' }, h('table', { class: 'spans' },
         h('thead', {}, h('tr', {}, ['Span', 'Time', 'Cost', 'Working'].map((c) => h('th', {}, c)))),
         h('tbody', {}, st.spans.map((sp) => h('tr', {}, h('td', {}, `${sp.from} → ${sp.to}`), h('td', {}, V.fmtDuration(sp.ms)), h('td', {}, V.fmtCost(sp.costUsd)), h('td', {}, V.fmtDuration(sp.workingMs))))))))
@@ -802,6 +850,22 @@
           : openDoc.error ? h('div', { class: 'cc-error-line', role: 'alert' }, openDoc.error) : h('pre', { class: 'doc-text', tabindex: 0, 'data-key': `doc-text-${openDoc.path}` }, openDoc.text)) : null)
   }
 
+  function summaryCard() {
+    const ended = team.endedAt !== undefined
+    const st = V.teamState(team)
+    return h('section', { class: 'hero' },
+      h('div', { class: 'head' },
+        h('h2', { title: team.title }, team.title),
+        // The state is a symbol and a word with its own border, never only a colour.
+        h('span', { class: `state state-${st.key}` }, h('span', { 'aria-hidden': 'true' }, `${st.symbol} `), st.label)),
+      h('dl', { class: 'kpis' }, V.kpis(team).map((k) => h('div', { class: 'kpi' }, h('dt', {}, k.label), h('dd', {}, k.value)))),
+      h('div', { class: 'bar' },
+        ended
+          ? btn('Delete…', () => openForm('delete'), { class: 'cc-danger' })
+          : [btn('+ Hire', () => openForm('hire', {}), { class: 'cc-primary' }), btn('Mark', () => openForm('mark', {})), btn('Invite', () => openForm('invite', {})),
+              h('span', { class: 'grow' }), btn('End…', () => openForm('end', {}), { class: 'cc-danger' })]))
+  }
+
   function renderDetail() {
     if (!selected) return null
     if (!team) {
@@ -809,21 +873,13 @@
         ? null // shown with the teams list
         : h('div', { class: 'cc-empty' }, h('span', { class: 'cc-spinner', role: 'status', 'aria-label': 'Loading' }), h('p', {}, 'Loading the team…'))
     }
-    const ended = team.endedAt !== undefined
-    const flags = V.teamFlags(team)
+    const body = { members: membersBody, activity: activityBody, docs: docsBody, stats: statsBody }[tab]
     return h('div', { class: 'detail' },
-      h('section', {},
-        h('div', { class: 'head' }, h('h2', {}, team.title), flags.map((w) => h('span', { class: 'cc-badge grey' }, w))),
-        h('div', { class: 'actions' },
-          ended
-            ? btn('Delete…', () => openForm('delete'), { class: 'cc-danger' })
-            : [btn('Hire…', () => openForm('hire', {})), btn('Mark', () => openForm('mark', {})), btn('Copy invite…', () => openForm('invite', {})), btn('End and export…', () => openForm('end', {}), { class: 'cc-danger' })])),
+      summaryCard(),
       form && form.kind !== 'new-team' ? renderForm() : null,
-      group('questions', 'Waiting on you', team.questions.length, questionsBody()),
-      group('members', 'Members', team.members.length, membersBody()),
-      group('stats', 'Numbers', null, statsBody()),
-      group('activity', 'Activity', null, activityBody()),
-      group('docs', 'Docs', null, docsBody()))
+      questionsBlock(),
+      renderTabs(),
+      h('div', { id: 'tabpanel', role: 'tabpanel', 'aria-labelledby': `tab-${tab}` }, body()))
   }
 
   function render() {

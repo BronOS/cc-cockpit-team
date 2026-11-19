@@ -40,6 +40,35 @@ test('every state is an icon and a word, never only a colour', () => {
   assert.equal(V.leftText({ status: 'working' }), '')
 })
 
+test('stateShape: five distinct shapes for the statuses, a cross for gone ones, a question mark for the unknown', () => {
+  assert.deepEqual(V.stateShape('working'), { shape: 'filled', glyph: '▶' })
+  assert.deepEqual(V.stateShape('waiting'), { shape: 'ring', glyph: '✓' })
+  assert.deepEqual(V.stateShape('needs-permission'), { shape: 'square', glyph: '!' })
+  assert.equal(V.stateShape('idle').shape, 'dashed')
+  assert.equal(V.stateShape('starting').shape, 'dashed')
+  for (const s of ['left', 'ended', 'closed']) assert.deepEqual(V.stateShape(s), { shape: 'gone', glyph: '✕' }, s)
+  assert.equal(V.stateShape('nonsense').shape, 'unknown')
+  assert.equal(V.stateShape('__proto__').shape, 'unknown')
+  const shapes = new Set(['working', 'waiting', 'needs-permission', 'idle', 'closed'].map((s) => V.stateShape(s).shape))
+  assert.equal(shapes.size, 5)
+})
+
+test('teamState, fmtAge, kpis and contextLevel', () => {
+  assert.deepEqual(V.teamState({}), { key: 'live', symbol: '●', label: 'LIVE' })
+  assert.equal(V.teamState({ paused: true }).label, 'PAUSED')
+  assert.equal(V.teamState({ paused: true, endedAt: 1 }).label, 'ENDED')
+  assert.equal(V.fmtAge(1000, 1000 + 21 * 60_000), '21m ago')
+  assert.equal(V.fmtAge(1000, 1010), 'just now')
+  assert.equal(V.fmtAge(0, 3 * 3600_000), '3h ago')
+  assert.equal(V.fmtAge('x', 1), '')
+  assert.deepEqual(V.kpis({ members: [1, 2] }).map((k) => k.value), ['—', '—', '2', '—'])
+  const st = { elapsedMs: 42 * 60_000, totals: { costUsd: 4.123, sent: 14, received: 12 } }
+  assert.deepEqual(V.kpis({ members: [], stats: st }).map((k) => k.value), ['42m 00s', '$4.12', '0', '14 / 12'])
+  assert.deepEqual(V.contextLevel(82), { pct: 82, high: true })
+  assert.deepEqual(V.contextLevel(34.4), { pct: 34, high: false })
+  assert.equal(V.contextLevel(null), null)
+})
+
 test('team meta names ended, paused and what waits on the person as text', () => {
   assert.equal(V.teamMeta({ members: 1, waiting: 0 }), '1 member')
   assert.equal(V.teamMeta({ members: 3, waiting: 2, paused: true }), '3 members · 2 waiting on you · paused')
@@ -353,7 +382,7 @@ test('the page renders a state as text, with icons and words, and asks for what 
   assert.match(text, /working/)
   assert.match(text, /★ coordinator/)
   assert.match(text, /<img src=x onerror=alert\(1\)> ok\?/)
-  assert.match(text, /2 messages waiting/)
+  assert.match(text, /✉ 2 held/)
   assert.match(text, /Nothing is waiting|Waiting on you/)
   // The first state selects the newest live team.
   assert.ok(p.posts.some((m) => m.type === 'select' && m.roomId === 'r1'))
@@ -379,19 +408,20 @@ test('an ended team offers Delete, a live one End and export', () => {
   const p = runPage()
   p.send(teamState({ team: null }))
   p.send(teamState())
-  assert.match(p.root.text, /End and export/)
+  assert.match(p.root.text, /End…/)
   assert.doesNotMatch(p.root.text, /Delete…/)
   const s = teamState()
   s.teams[0].endedAt = 9
   s.team.endedAt = 9
   p.send(s)
   assert.match(p.root.text, /Delete…/)
-  assert.doesNotMatch(p.root.text, /End and export/)
-  assert.match(p.root.text, /ended/)
-  // Read-only: the open question is shown with no Reply or Done.
+  assert.doesNotMatch(p.root.text, /End…/)
+  assert.match(p.root.text, /ENDED/)
+  // Read-only: the open question is shown with no answer box or Done.
   assert.match(p.root.text, /ok\?/)
   assert.match(p.root.text, /Not answered before the team ended/)
-  assert.doesNotMatch(p.root.text, /Reply|Done/)
+  assert.doesNotMatch(p.root.text, /Done/)
+  assert.equal(p.find((e) => e.tag === 'textarea').length, 0)
 })
 
 // ---- the protocol, with the page's real code ----
@@ -410,11 +440,11 @@ const start = (st = teamState()) => {
   p.send(st)
   return p
 }
-const toggle = (p, label, on = true) => {
-  const d = p.find((e) => e.tag === 'details' && e.text.startsWith(label))[0]
-  d.open = on
-  p.fire(d, 'toggle', { target: d })
-}
+// The sections are tabs now: `toggle(p, 'Activity')` shows that tab, `toggle(p, 'Activity', false)` goes back to Members.
+const showTab = (p, label) => p.fire(p.find((e) => e.attrs.role === 'tab' && e.text.startsWith(label))[0], 'click')
+const toggle = (p, label, on = true) => showTab(p, on ? label : 'Members')
+// Enter in the first (or given) answer box sends it, as the old Reply button did.
+const pressReply = (p, i = 0) => { const box = p.find((e) => e.tag === 'textarea')[i]; p.fire(box, 'keydown', { key: 'Enter', shiftKey: false, target: box }) }
 const memberRow = (p, name) => p.find((e) => e.tag === 'li' && e.dataset.key === `member-${name}`)[0]
 const clickBtn = (p, label) => p.fire(p.button(label), 'click')
 const typeInto = (p, input, value) => { input.value = value; p.fire(input, 'input', { target: input }) }
@@ -444,7 +474,7 @@ test('reply: sends the exact message, a refusal is shown and the box is usable a
   const p = start()
   const box = p.find((e) => e.tag === 'textarea')[0]
   typeInto(p, box, 'yes please')
-  clickBtn(p, 'Reply')
+  pressReply(p)
   assert.deepEqual(p.sent('reply'), [{ type: 'reply', roomId: 'r1', id: 'q1', text: 'yes please' }])
   assert.equal(p.find((e) => e.tag === 'textarea')[0].disabled, true, 'busy while in flight')
   p.answer(p.posts.find((m) => m.type === 'reply'), { ok: false, error: 'the question is gone' })
@@ -453,7 +483,7 @@ test('reply: sends the exact message, a refusal is shown and the box is usable a
   const again = p.find((e) => e.tag === 'textarea')[0]
   assert.ok(!again.disabled)
   assert.equal(again.value, 'yes please', 'the draft is kept')
-  clickBtn(p, 'Reply')
+  pressReply(p)
   p.answer(p.posts.filter((m) => m.type === 'reply')[1], { ok: true, answers: [{ to: 'api', path: 'delivered' }] })
   await tick(p)
   assert.match(p.root.text, /Answer sent to api\./)
@@ -463,20 +493,20 @@ test('reply too large to post (ccPanel.post throws over 1 MiB): an error is show
   const p = start()
   const box = p.find((e) => e.tag === 'textarea')[0]
   typeInto(p, box, 'x'.repeat(1024 * 1024 + 10))
-  clickBtn(p, 'Reply')
+  pressReply(p)
   await tick(p)
   assert.equal(p.sent('reply').length, 0, 'nothing posted')
   assert.match(p.root.text, /Too large to send/)
   const again = p.find((e) => e.tag === 'textarea')[0]
   assert.ok(!again.disabled, 'the reply controls are enabled again')
-  assert.ok(!p.button('Reply').attrs.disabled && !p.button('Reply').disabled)
+  assert.ok(!p.button('Done').disabled)
   assert.equal(again.value.length, 1024 * 1024 + 10, 'the draft is kept')
 })
 
 test('reply held (a paused room after a restart): the page says queued and why, never "sent"', async () => {
   const p = start()
   typeInto(p, p.find((e) => e.tag === 'textarea')[0], 'yes please')
-  clickBtn(p, 'Reply')
+  pressReply(p)
   p.answer(p.posts.find((m) => m.type === 'reply'), { ok: true, answers: [{ to: 'api', path: 'held', why: 'paused' }] })
   await tick(p)
   assert.match(p.root.text, /Answer queued for api, not yet pointed out to it: the room is paused/)
@@ -506,7 +536,7 @@ test('done, focus, fire and end send their exact messages and show the answer', 
   await tick(p)
   assert.match(p.root.text, /api removed from the team\./)
 
-  clickBtn(p, 'End and export…')
+  clickBtn(p, 'End…')
   typeInto(p, p.find((e) => e.tag === 'input')[0], ' out ')
   clickBtn(p, 'End team')
   assert.deepEqual(p.sent('end'), [{ type: 'end', roomId: 'r1', dir: 'out' }])
@@ -551,7 +581,7 @@ test('select is sent once per team change; a state for another team is ignored',
   assert.equal(p.sent('select').length, 1)
   p.send(st)
   assert.equal(p.sent('select').length, 1, 'no new select for the same team')
-  const row = p.find((e) => e.tag === 'li' && e.dataset.key === 'team-r2')[0]
+  const row = p.find((e) => e.dataset.key === 'team-r2')[0]
   p.fire(row, 'click')
   p.fire(row, 'click')
   assert.deepEqual(p.sent('select').map((m) => m.roomId), ['r1', 'r2'])
@@ -574,21 +604,108 @@ test('an old app\'s error is drawn with no team; New team is the title bar\'s +,
   assert.equal(p.find((e) => e.tag === 'input')[0].value, 'Checkout')
 })
 
-test('open sections: a log move re-asks the activity and the docs list, never a doc text', async () => {
+test('open tabs: a log move re-asks the activity and the docs list, never a doc text', async () => {
   const p = start()
   toggle(p, 'Activity')
-  toggle(p, 'Docs')
   assert.deepEqual(p.sent('activity'), [{ type: 'activity', roomId: 'r1' }])
-  assert.deepEqual(p.sent('docs'), [{ type: 'docs', roomId: 'r1' }])
+  assert.deepEqual(p.sent('docs'), [], 'Docs is not asked while its tab is not shown')
   p.answer(p.posts.find((m) => m.type === 'activity'), { ok: true, entries: [entry(3)], before: null })
-  p.answer(p.posts.find((m) => m.type === 'docs'), { ok: true, docs: [{ path: 'a.md', size: 3 }] })
   await tick(p)
   assert.match(p.root.text, /m3 left/)
+  toggle(p, 'Docs')
+  assert.deepEqual(p.sent('docs'), [{ type: 'docs', roomId: 'r1' }])
+  p.answer(p.posts.find((m) => m.type === 'docs'), { ok: true, docs: [{ path: 'a.md', size: 3 }] })
+  await tick(p)
+  assert.match(p.root.text, /a\.md/)
+  // Only the shown tab is re-asked on a log move.
   p.send(withLog(4))
   p.runTimeouts()
-  assert.equal(p.sent('activity').length, 2)
   assert.equal(p.sent('docs').length, 2)
+  assert.equal(p.sent('activity').length, 1)
   assert.equal(p.sent('doc').length, 0)
+  toggle(p, 'Activity')
+  assert.equal(p.sent('activity').length, 2, 'asked again when shown, as the log moved')
+})
+
+test('tabs: roles, selected state and arrow keys; Members is the default and carries a count', () => {
+  const p = start()
+  const tabs = () => p.find((e) => e.attrs.role === 'tab')
+  assert.equal(p.find((e) => e.attrs.role === 'tablist').length, 1)
+  assert.deepEqual(tabs().map((t) => t.attrs['aria-selected']), ['true', 'false', 'false', 'false'])
+  assert.match(tabs()[0].text, /^Members 2$/)
+  p.fire(tabs()[0], 'keydown', { key: 'ArrowRight' })
+  assert.deepEqual(tabs().map((t) => t.attrs['aria-selected']), ['false', 'true', 'false', 'false'])
+  assert.equal(p.sent('activity').length, 1, 'arrowing onto Activity loads it like a click')
+  p.fire(tabs()[1], 'keydown', { key: 'ArrowLeft' })
+  p.fire(tabs()[0], 'keydown', { key: 'ArrowLeft' })
+  assert.equal(tabs()[3].attrs['aria-selected'], 'true', 'wraps to Numbers')
+  assert.match(p.root.text, /No numbers yet/)
+})
+
+test('an answer box: Enter sends, Shift+Enter does not; an empty answer is refused with a notice', () => {
+  const p = start()
+  const box = p.find((e) => e.tag === 'textarea')[0]
+  typeInto(p, box, 'yes')
+  p.fire(box, 'keydown', { key: 'Enter', shiftKey: true, target: box })
+  assert.equal(p.sent('reply').length, 0, 'Shift+Enter is a newline')
+  p.fire(box, 'keydown', { key: 'Enter', shiftKey: false, target: box })
+  assert.deepEqual(p.sent('reply'), [{ type: 'reply', roomId: 'r1', id: 'q1', text: 'yes' }])
+  // Busy: a second Enter does not send again.
+  const busyBox = p.find((e) => e.tag === 'textarea')[0]
+  p.fire(busyBox, 'keydown', { key: 'Enter', shiftKey: false, target: busyBox })
+  assert.equal(p.sent('reply').length, 1)
+  const q = start()
+  pressReply(q)
+  assert.equal(q.sent('reply').length, 0)
+  assert.match(q.root.text, /Write an answer first/)
+})
+
+test('the alert block is absent with no questions and muted (no amber class) on an ended team', () => {
+  const none = start(teamState({ team: { ...teamState().team, questions: [] } }))
+  assert.equal(none.find((e) => e.className.split(' ').includes('attn')).length, 0)
+  assert.doesNotMatch(none.root.text, /Waiting on you/)
+  const live = start()
+  assert.equal(live.find((e) => e.className === 'attn').length, 1)
+  assert.match(live.root.text, /Waiting on you · 1/)
+  const s = teamState()
+  s.teams[0].endedAt = 9
+  s.team.endedAt = 9
+  const ended = start(s)
+  assert.equal(ended.find((e) => e.className === 'attn muted').length, 1)
+})
+
+test('team chips: a listbox of options; Enter and Space select, arrows move focus, the selected one says so', () => {
+  const st = twoTeams()
+  const p = start(st)
+  assert.equal(p.find((e) => e.attrs.role === 'listbox').length, 1)
+  const chips = () => p.find((e) => e.attrs.role === 'option')
+  assert.equal(chips().length, 2)
+  assert.deepEqual(chips().map((c) => c.attrs['aria-selected']), ['true', 'false'])
+  p.fire(chips()[1], 'keydown', { key: 'ArrowLeft' })
+  assert.equal(p.document.activeElement, chips()[0], 'arrow moves focus without selecting')
+  assert.equal(p.sent('select').length, 1)
+  p.fire(chips()[1], 'keydown', { key: ' ' })
+  assert.deepEqual(p.sent('select').map((m) => m.roomId), ['r1', 'r2'])
+  p.send(st)
+  p.fire(chips()[0], 'keydown', { key: 'Enter' })
+  assert.deepEqual(p.sent('select').map((m) => m.roomId), ['r1', 'r2', 'r1'])
+  assert.match(chips()[0].text, /\? 1/, 'questions waiting show as a pill')
+})
+
+test('summary card: state label, tiles from stats or a dash, Hire primary and End last; ended offers only Delete', () => {
+  const p = start()
+  assert.match(p.root.text, /● LIVE/)
+  const bar = p.find((e) => e.className === 'bar')[0]
+  assert.deepEqual(bar.children.filter((c) => c.tag === 'button').map((b) => b.text), ['+ Hire', 'Mark', 'Invite', 'End…'])
+  assert.equal(p.find((e) => e.tag === 'button' && e.className === 'cc-primary').length, 1)
+  const st = teamState({ team: { ...teamState().team, paused: true } })
+  assert.match(start(st).root.text, /‖ PAUSED/)
+  const s = teamState()
+  s.team.endedAt = 9
+  s.teams[0].endedAt = 9
+  const ended = start(s)
+  assert.match(ended.root.text, /■ ENDED/)
+  assert.deepEqual(ended.find((e) => e.className === 'bar')[0].children.map((b) => b.text), ['Delete…'])
 })
 
 test('two reads of the same doc answered out of order: the newer read\'s text stays', async () => {
@@ -675,7 +792,7 @@ test('a team switch during a load: the old answer is ignored and the new team is
   const select = p.find((e) => e.tag === 'select')[0]
   select.value = 'api'
   p.fire(select, 'change', { target: select })
-  p.fire(p.find((e) => e.tag === 'li' && e.dataset.key === 'team-r2')[0], 'click')
+  p.fire(p.find((e) => e.dataset.key === 'team-r2')[0], 'click')
   p.send({ ...st, team: { roomId: 'r2', title: 'Other', createdAt: 0, paused: false, members: 0, waiting: 0, logSeq: 1, members: [], questions: [], marks: [], stats: null } })
   p.runTimeouts()
   p.answer(old, { ok: true, entries: [entry(3)], before: null })
@@ -748,7 +865,7 @@ test('a state that changed nothing renders nothing; focus and the scroll of the 
   await tick(p)
   p.find((e) => e.className === 'doc-text')[0].scrollTop = 77
   p.find((e) => e.tag === 'textarea')[0].scrollTop = 33
-  const hire = p.button('Hire…')
+  const hire = p.button('+ Hire')
   hire.focus()
   // The elapsed time moves: the page may render (nothing is being typed), and everything stays where it was.
   const st = teamState()
@@ -757,9 +874,10 @@ test('a state that changed nothing renders nothing; focus and the scroll of the 
   st.team.stats = { ...st.team.stats, elapsedMs: 10000 }
   p.send(st)
   const now = p.document.activeElement
-  assert.ok(now.isConnected && now.text === 'Hire…', 'focus on a button without a key is restored')
+  assert.ok(now.isConnected && now.text === '+ Hire', 'focus on a button without a key is restored')
   assert.equal(p.find((e) => e.className === 'doc-text')[0].scrollTop, 77)
   assert.equal(p.find((e) => e.tag === 'textarea')[0].scrollTop, 33)
+  toggle(p, 'Members')
   const member = memberRow(p, 'lead')
   member.focus()
   st.team.stats = { ...st.team.stats, elapsedMs: 15000 }
@@ -804,7 +922,7 @@ test('Enter on the actions button does not also show the tab; Enter on a team ro
 
 test('a confirm focuses Cancel; Enter in the End form\'s folder field does not end the team', () => {
   const p = start()
-  clickBtn(p, 'End and export…')
+  clickBtn(p, 'End…')
   assert.equal(p.document.activeElement.text, 'Cancel')
   const input = p.find((e) => e.tag === 'input')[0]
   p.fire(input, 'keydown', { key: 'Enter' })
@@ -848,7 +966,7 @@ const r2State = (teams) => ({
 })
 /** The ways the selection moves off r1: a click on r2, or a state where r1 is gone (deleted elsewhere). */
 const switches = {
-  click: (p) => p.fire(p.find((e) => e.tag === 'li' && e.dataset.key === 'team-r2')[0], 'click'),
+  click: (p) => p.fire(p.find((e) => e.dataset.key === 'team-r2')[0], 'click'),
   'auto-select after a delete': (p, st) => p.send({ ...st, teams: st.teams.filter((t) => t.roomId !== 'r1'), team: null }),
 }
 
@@ -872,7 +990,7 @@ for (const [how, move] of Object.entries(switches)) {
   })
 
   test(`every team form and confirm is closed by a team change (${how}); New team stays`, async () => {
-    for (const [open, marker] of [['Hire…', 'Hire a member'], ['Mark', 'Add mark'], ['Copy invite…', 'Create invite'], ['End and export…', 'End team'], ['fire', 'Remove'], ['invite-result', 'Copy line']]) {
+    for (const [open, marker] of [['+ Hire', 'Hire a member'], ['Mark', 'Add mark'], ['Invite', 'Create invite'], ['End…', 'End team'], ['fire', 'Remove'], ['invite-result', 'Copy line']]) {
       const st = twoTeams()
       const p = start(st)
       if (open === 'fire' || open === 'invite-result') {
@@ -903,12 +1021,12 @@ for (const [how, move] of Object.entries(switches)) {
     const st = twoTeams()
     const p = start(st)
     typeInto(p, p.find((e) => e.tag === 'textarea')[0], 'yes')
-    clickBtn(p, 'Reply')
+    pressReply(p)
     assert.equal(p.sent('reply')[0].roomId, 'r1')
     move(p, st)
     p.send(r2State(st.teams.filter((t) => how === 'click' || t.roomId !== 'r1')))
     assert.match(p.root.text, /other team\?/)
-    assert.ok(p.button('Reply') && !p.button('Reply').disabled, 'r2\'s Reply is usable')
+    assert.ok(!p.find((e) => e.tag === 'textarea')[0].disabled, 'r2\'s answer box is usable')
     assert.ok(!p.button('Done').disabled)
     clickBtn(p, 'Done')
     assert.deepEqual(p.sent('done'), [{ type: 'done', roomId: 'r2', id: 'q1' }])
@@ -926,7 +1044,7 @@ test('the delete confirm closes when an end elsewhere auto-selects another team;
   st.team.endedAt = 9
   // r2 is live, so it is picked first: the person selects the ended r1.
   const p = start(st)
-  p.fire(p.find((e) => e.tag === 'li' && e.dataset.key === 'team-r1')[0], 'click')
+  p.fire(p.find((e) => e.dataset.key === 'team-r1')[0], 'click')
   p.send(st)
   clickBtn(p, 'Delete…')
   assert.match(p.root.text, /Delete team/)
