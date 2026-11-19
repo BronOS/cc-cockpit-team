@@ -9,6 +9,7 @@ const { createCommands, createHiring, USAGE } = require('../lib/commands.js')
 const { createMetrics } = require('../lib/metrics.js')
 const { createEnding } = require('../lib/export.js')
 const { createPanel } = require('../lib/panel.js')
+const { createStars } = require('../lib/stars.js')
 
 const OLD_APP = 'Team needs cc-cockpit 0.19.1 or newer (Rooms): update the app.'
 
@@ -62,9 +63,11 @@ exports.activate = (ctx) => {
   // Hiring too: its per-name lock covers `ccc team hire` and the panel's Hire and New team; the teams' export guard
   // refuses a hire or a fire while a team is being exported and ended.
   const hiring = createHiring(ctx, metrics, questions.names, teams.guard)
-  instances = { teams, questions, metrics, ending, hiring }
+  // Stars take the same name locks: a fire of the starred member waits for the star's send and save.
+  const stars = createStars(ctx, teams, questions.names)
+  instances = { teams, questions, metrics, ending, hiring, stars }
   metrics.start().catch((err) => ctx.log.warn(`team metrics: ${err && err.message}`))
-  disposers.push(ctx.cli.register('team', createCommands(ctx, teams, questions, metrics, ending, hiring)))
+  disposers.push(ctx.cli.register('team', createCommands(ctx, teams, questions, metrics, ending, hiring, stars)))
   // The panel's backend on the same instances (design §7): it checks every action again.
   const panel = createPanel(ctx, instances)
   panel.start()

@@ -13,7 +13,7 @@
       {
         "name": "team",
         "summary": "Start and run a team of Claude tabs (one room)",
-        "usage": "team start \"<title>\" [--as <name>] | hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--env NAME=value]... [--coordinator] | invite <name> [--coordinator] | fire <name> | ask \"<question>\" | ask - | mark \"<label>\" | list [--json] | stats [--json] | end [--export <dir>] | help",
+        "usage": "team start \"<title>\" [--as <name>] | hire <name> --kickoff <file> [--model m] [--effort e] [--cwd dir] [--env NAME=value]... [--coordinator] | invite <name> [--coordinator] | fire <name> | ask \"<question>\" | ask - | mark \"<label>\" | star <name> \"<reason>\" | list [--json] | stats [--json] | end [--export <dir>] | help",
         "stdin": true,
         "stdinDash": true
       }

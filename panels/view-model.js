@@ -112,6 +112,19 @@
     return m.leftWhy ? `left (${m.leftWhy})` : 'left'
   }
 
+  /**
+   * A member's star badge, or null with none: the count, and the reasons for its tooltip, one a line (plain text: a
+   * coordinator's words, shown through `title`). Not the coordinator's lone star: that one has no count.
+   */
+  function starBadge(m) {
+    const stars = m && Array.isArray(m.stars) ? m.stars.filter((s) => s && typeof s.reason === 'string') : []
+    if (stars.length === 0) return null
+    const n = stars.length
+    const head = `${n} star${n === 1 ? '' : 's'} from the person:`
+    const lines = stars.map((s) => `• ${s.reason}${typeof s.by === 'string' && s.by !== '' ? ` (by ${s.by})` : ''}`)
+    return { count: n, text: `✦ ${n}`, label: `${n} star${n === 1 ? '' : 's'}`, title: [head, ...lines].join('\n') }
+  }
+
   /** "ended" / "paused" as text. */
   function teamFlags(t) {
     const out = []
@@ -292,7 +305,7 @@
   }
 
   const api = {
-    fmtDuration, fmtCost, fmtPercent, fmtTime, statusInfo, stateShape, teamState, fmtAge, kpis, contextLevel, leftText, teamFlags, teamMeta, sortTeams, pickSelected, logMoved, activityKey,
+    fmtDuration, fmtCost, fmtPercent, fmtTime, statusInfo, stateShape, teamState, fmtAge, kpis, contextLevel, leftText, starBadge, teamFlags, teamMeta, sortTeams, pickSelected, logMoved, activityKey,
     describeEntry, KINDS, docLabel, newTeamRequest, hireRequest, inviteRequest, replyRequest, replyOutcome, markRequest, endRequest,
     activityRequest, PING_SECONDS: 30,
   }

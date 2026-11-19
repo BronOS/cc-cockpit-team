@@ -763,6 +763,7 @@
         } }, '⋯')
       : null
     const modelEffort = [m.model, m.effort].filter(Boolean).join(' / ')
+    const stars = V.starBadge(m)
     const attention = m.status === 'needs-permission'
     return h('li', {
       class: 'm' + (live ? ' live' : ''), tabindex: live ? 0 : null, 'data-key': live ? `member-${m.name}` : null, title: live ? 'Show this member\'s tab' : null,
@@ -774,6 +775,8 @@
     h('span', { class: 'name' },
       h('span', { class: 'nm' }, m.name),
       m.coordinator ? h('span', { class: 'star', title: COORDINATOR_TITLE }, '★', h('span', { class: 'sr' }, ' coordinator')) : null,
+      // The person's stars (`ccc team star`): a count badge, the reasons in its tooltip. Kept on a fired member's row.
+      stars ? h('span', { class: 'stars', title: stars.title }, h('span', { 'aria-hidden': 'true' }, stars.text), h('span', { class: 'sr' }, ` ${stars.label}`)) : null,
       h('span', { class: 'word' + (attention ? ' attn-word' : '') }, s.word + (m.tool ? ` · ${m.tool}` : ''))),
     h('span', { class: 'right' }, h('b', {}, V.fmtCost(m.costUsd)), h('span', { class: 'cc-muted small' }, V.fmtDuration(m.workingMs))),
     h('span', { class: 'more-slot' }, actionsBtn),

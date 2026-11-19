@@ -24,6 +24,7 @@ invite <name> [--coordinator]
 fire <name>
 ask "<question>"   |   ask -
 mark "<label>"
+star <name> "<reason>"
 list [--json]   stats [--json]
 end [--export <dir>]
 help
@@ -41,7 +42,12 @@ help
   allows. Every new pane halves its anchor, so the heights are uneven; drag the dividers. The setting "Layout of hired members" also
   offers "grid" (a 2x2: right, below, below the first) and "tabs" (no split panes). Members past the limit, or one the app cannot
   place, open as plain tabs. `hire` prints which it was.
-- `hire`, `invite`, `fire`, `mark`, `end` are for coordinators; `ask`, `list`, `stats` for any member. The caller is
+- `star` gives a member the person's star for good work (the lead runs it when you say so): the member gets a room
+  message `The person gave you a star: <reason> (recorded by <lead>)`, and the star is kept with the member's settings
+  at that moment (coordinator or member, model, effort, Code Mode). A member can get several; a name not in the team
+  now is refused, and a star the member could not be sent is not kept. The Team panel shows a badge with the count
+  beside the member (✦ 2), the reasons in its tooltip; a fired member keeps its stars. The export lists them (below).
+- `hire`, `invite`, `fire`, `mark`, `star`, `end` are for coordinators; `ask`, `list`, `stats` for any member. The caller is
   known by main from its tab, never from an argument; a tab outside a team gets the same refusal for all but `start`
   and `help`.
 - A kickoff is a UTF-8 text file of at most 256 KiB (no symlink, not empty, no control, bidi or invisible
@@ -71,7 +77,8 @@ Destructive steps ask in the page.
 When the owner shows Team to guests they invited (cc-cockpit's guest invites; Settings > Plugins, hidden by default),
 a guest's Team panel shows the teams, the selected team, its activity and its docs, and nothing to act with: every
 action (New team, Hire, Mark, Invite, Fire, Show tab, reply, Done, End, Delete) is refused to a guest's view,
-read-only or write, by the plugin's host from the app's word for that view. The export folder setting is left out of
+read-only or write, by the plugin's host from the app's word for that view. Stars have no panel action (only
+`ccc team star`), so a guest sees the badges and gives none. The export folder setting is left out of
 a guest's view. `ccc team` typed in a tab the owner shared with a write guest is the owner's command, like anything
 typed there. An app without guests sends no access: every view is the owner's, as before.
 
@@ -87,10 +94,11 @@ no working time. Your active time is a proxy (question to reply, plus a fixed wi
 
 `ccc team end --export <dir>`, or the "Export folder" setting (`~/` and a project-relative folder are accepted), writes
 a new folder `<dir>/<team-slug>-<yyyymmdd-hhmm>/` before the room ends: `docs/`, `log.jsonl`, `metrics.json`,
-`metrics.md`, `questions.md`. The log and the metrics cover the same entries, up to the one the stats were taken at
+`metrics.md`, `questions.md`. `metrics.json` has `stars` (per starred member: coordinator or not, model, effort, Code
+Mode as hired, and each star's reason, giver and time) and `metrics.md` a Stars table, for a retrospective. The log and the metrics cover the same entries, up to the one the stats were taken at
 (`logSeq` in `metrics.json`); what the room logs after that (a message sent while the export runs, the closing `end`
 entry and the members leaving with it) is in neither. While a team is exported and ended, the plugin's own changes to it
-(reply, Done, ask, mark, hire, fire, invite) are refused with "try again in a moment". An existing folder is refused, files are never written through a symlink, files are 0600
+(reply, Done, ask, mark, star, hire, fire, invite) are refused with "try again in a moment". An existing folder is refused, files are never written through a symlink, files are 0600
 and folders 0700, and a failed export leaves the team running. From `ccc` the export has 20 s from the call's start (a `ccc` call is cut at
 30 s), and a cancelled call (Ctrl+C, the cut) never ends the team; a team too big for that is ended from the panel.
 
@@ -103,6 +111,8 @@ and folders 0700, and a failed export leaves the team running. From `ccc` the ex
   closed questions are shortened and eventually dropped from the record. Marks: 200 per team, label one line of at most
   200 characters. A team's stats list every current member and the 50 that left most recently; older former members are
   folded into the totals (a count says how many), so a long-lived team's record stays small.
+- Stars: 200 per team, a reason one line of at most 300 characters (plain text, no control, bidi or invisible
+  characters).
 - Question answers are not stored by the plugin (only when they were answered); the answer text is in the room log.
 - A team being started (`ccc team start`, New team) takes no other change until its invite or its lead's tab is made
   ("the team is still being set up"). A start that fails deletes its new room, unless something else joined or changed

@@ -31,7 +31,7 @@ Repo `~/Projects/cc-cockpit-team` (GitHub `BronOS/cc-cockpit-team`), id `bronos.
 caps of §6 are in the 0.19.0 tag, whose release failed; first released as 0.19.1).
 
 A **team is one room** of this plugin in this window. The plugin's own record per team (in `ctx.storage`, per project):
-`{ roomId, title, createdAt, endedAt?, exportDir?, marks[], questions[], metrics }`. Messages, docs, membership and the
+`{ roomId, title, createdAt, endedAt?, exportDir?, marks[], questions[], stars[], metrics }`. Messages, docs, membership and the
 log stay in Rooms, where main enforces every rule. The old experimental plugin of the same id is unlinked first.
 
 ## 2. Lifecycle (`ccc team`)
@@ -44,6 +44,7 @@ log stay in Rooms, where main enforces every rule. The old experimental plugin o
 | `fire <name>` | coordinator | removes the member; its tab stays |
 | `ask "<question>"` / `-` | any member | a question to the person (§3); prints its id |
 | `mark "<label>"` | coordinator | a timestamp on the team's timeline (§4) |
+| `star <name> "<reason>"` | coordinator | the person's star for a member: told to it as a room message, kept with its settings (§4) |
 | `list [--json]`, `stats [--json]` | any member | the team, its members, the metrics |
 | `end [--export <dir>]` | coordinator | exports (§5), then ends the room and closes the hired members' tabs |
 | `help` | anyone | usage |
@@ -125,13 +126,20 @@ click is logged as a send with no `delivery`, which counts nowhere), so a held m
 Per team: start, end, total cost, sum of member working time, the person's active time (question to reply, plus panel
 actions; a proxy, said so in the panel and export). **Marks** (`mark`, or the panel's Mark button) split cost and time
 into spans; what a mark means is the flow's. A mark label cannot be `start`, `now` or `end` (the spans' fixed ends).
+**Stars** (`star`, lib/stars.js) are the person's "well done" for a member, given through a coordinator: the member gets
+a room message from the plugin (`The person gave you a star: <reason> (recorded by <coordinator>)`), then the star is
+kept as `{ at, name, reason, by, coordinator, model?, effort?, codeMode? }`, a snapshot of the member when starred (a
+name can be fired and hired again with other settings, and its metrics row folded away). Code Mode is what the app
+applied at the hire (`env`), unknown for a member that joined by invite. A star the member could not be sent (`gone`,
+`refused`) is not kept. The panel shows a count badge per member with the reasons in its tooltip; `stats` and the export
+list them per member and settings, a signal for the flow's retrospective. The tool judges nothing.
 
 Kept in the team record, updated on status changes and log polls; shown live in the panel and by `stats`. Cost covers
 the members' tabs only (a member's subagents are in its tab's cost; work outside the team's tabs is not counted). Time
 between an app quit and the person's resume is not counted as working. The record keeps the newest 300 closed questions
 and 500 panel actions; what falls out is folded into stored counters first, so no total goes down as a team goes on.
 Every stored per-team value is bounded the same way (the record is one 1 MiB value): questions as in §3, 200 marks of
-at most 200 characters, 500 panel actions, 200 uncounted-gap entries, and **former members**: the record keeps a row for
+at most 200 characters, 200 stars with a one-line reason of at most 300 characters, 500 panel actions, 200 uncounted-gap entries, and **former members**: the record keeps a row for
 every current member and for the 50 that left most recently (`FORMER_MAX`, `lib/stats.js`); the ones that left longer
 ago are folded into one stored counter set (`metrics.folded.former`), so the totals (and the marks' span numbers) stay
 whole, `stats` and `metrics.md` say how many rows were folded, and only a name hired again after being folded starts a
@@ -142,7 +150,7 @@ new row (its earlier numbers are in the totals). The log state is a cursor and a
 `end [--export <dir>]` (coordinator) or the panel's **End and export**. The room ends with `ctx.rooms.end(id, { closeTabs: true })`: the tabs the app opened for hired members close with it, with no dialog (they were opened automatically, and the End is the person's decision); main keeps a coordinator's tab, an invited tab (the person's own, the lead's) and any tab the person typed in, and an app before 0.22.0 closes none. The export goes into a **new** folder
 `<dir>/<team-slug>-<yyyymmdd-hhmm>/`, made with an exclusive create, never into an existing one:
 `docs/` (the room's docs as stored, `shared/` and `members/<name>/`), `log.jsonl` (the room log, paged through to the
-end), `metrics.json`, `metrics.md` (a table, split at marks), `questions.md`. Without `--export` the plugin setting
+end), `metrics.json`, `metrics.md` (a table, split at marks, and the stars per member), `questions.md`. Without `--export` the plugin setting
 "Export folder" is used (empty by default: no export). Paths come from Rooms (already restricted to `[A-Za-z0-9._-]`,
 depth 4) and are checked again before writing; files are written with no-follow, never through a symlink, and every
 folder of the export is checked by realpath before each write and each cleanup removal (a folder swapped for a link
@@ -150,7 +158,7 @@ stops the export, and the cleanup removes nothing through it). Files are 0600 an
 message texts). Before the stats are taken the metrics read the room log to its end, however long the backlog (a poll
 reads at most 20 pages a team); a log read failing there fails the export (the team keeps running). From the start of
 an End to its finish (success or failure) the team is held: the plugin's own changes to it (a reply, a Done, an ask, a
-mark, a hire, a fire, an invite, from `ccc team` or the panel) are refused with "the team is being exported and ended:
+mark, a star, a hire, a fire, an invite, from `ccc team` or the panel) are refused with "the team is being exported and ended:
 try again in a moment", and the ones already running finish before the catch-up starts, so the stats, `log.jsonl` and
 `questions.md` see a team the plugin no longer changes (the panel's active-time count is skipped meanwhile). Members'
 own sends through Rooms are not the plugin's to hold: the room is live
@@ -161,7 +169,7 @@ from the call's start (that catch-up included), inside the 30 s cut
 of a `ccc` call, so a too-big team fails and keeps running instead of ending unseen after exit 124; the budget and the
 call's abort signal are checked once more right before `rooms.end`. The panel has no budget.
 
-**The rule for every change** (hire, fire, invite, the coordinator invite a second `start` re-issues, ask, reply, Done, mark, End, Delete, and the panel's actions, which
+**The rule for every change** (hire, fire, invite, the coordinator invite a second `start` re-issues, ask, reply, Done, mark, star, End, Delete, and the panel's actions, which
 go through the same functions): a change decides **all** its preconditions inside its guard (and its name lock when it
 takes one), after its last await and right before its write: the team is live and still the same record (after a
 refresh, so a room ended from core's room view counts), the member it acts for or on is (or is not, for a hire) in main's
@@ -170,9 +178,10 @@ made before an await (`requireMember`, the panel's team lookup, a member list th
 quick refusal only: an End can finish, a hire or a fire can land, while a change waits on a host call, and the hold of
 an End that already finished protects nothing (`createTeamGuard` in `lib/teams.js` states the rule where the guard is
 defined). Who the caller is (a member, a coordinator) is decided at the call's start, like any request's
-authorization; `ask` and a coordinator's `mark`, which write the caller's name into the record, check it again inside,
-holding that name from the member read to the save. Every change that acts for or on a member name holds the name's
-lock (`createNameLocks`): hire and fire alone; reply, ask and mark together (each only needs the member to stay), so a
+authorization; `ask`, a coordinator's `mark` and `star`, which write the caller's name into the record, check it again
+inside, holding that name from the member read to the save (`star` holds the starred name too, from the read to the send
+and the save). Every change that acts for or on a member name holds the name's
+lock (`createNameLocks`): hire and fire alone; reply, ask, mark and star together (each only needs the member to stay), so a
 fire of an asker, of a marking coordinator or of a member an answer is on its way to is refused ("try again in a
 moment"), and the hire or fire of a name refuses them. Locks are taken in one order: the export guard, then the name
 lock inside it. Done acts on a question, not a name, and takes none. What a member
@@ -182,7 +191,7 @@ send or remove).
 
 **A team being set up** (`ccc team start`, the panel's New team) is held by the same guard (`guard.setup`) from the
 moment `rooms.create` answers to the coordinator's invite or the lead's open, or to the cleanup of a start that failed:
-every other change (hire, fire, invite, ask, reply, Done, mark, End, Delete) is refused with "the team is still being set
+every other change (hire, fire, invite, ask, reply, Done, mark, star, End, Delete) is refused with "the team is still being set
 up: try again in a moment", and only the setup's own hire passes (its token). A start that fails ends and deletes its
 room only while the room is still as the start left it: the room log holds nothing but the `create`, the start's own
 invite of its coordinator name and the plugin's writes of that name's kickoff doc, read before `rooms.end` and again
