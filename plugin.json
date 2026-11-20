@@ -1,7 +1,7 @@
 {
   "id": "bronos.team",
   "name": "Team",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "api": 1,
   "description": "Run a team of Claude tabs on cc-cockpit Rooms: start a team, hire members from a kickoff file, hear their questions, watch cost and time, export the result. A tool, not a flow. Needs cc-cockpit 0.22.0 (Rooms from 0.19.1).",
   "author": "Oleg Bronzov",
